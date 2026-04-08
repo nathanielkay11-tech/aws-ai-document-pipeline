@@ -26,11 +26,15 @@ graph LR
     B --> C[Amazon Textract]
     C --> D[Amazon Bedrock]
     D --> E[Amazon DynamoDB]
-    D --> F[SNS Alert]
+    D --> F[SNS Internal]
+    D --> G[SNS Claimant]
+    F --> H[Claims Manager]
+    G --> I[Claimant]
+    E --> J[Audit Review]
 ```
 
 ## Project Status
-🔵 Design phase in progress
+🟡 Design phase complete — moving to infrastructure build
 
 ## Services Used
 
@@ -40,6 +44,6 @@ graph LR
 | AWS Lambda | The coordinator — connects all services and runs only when needed |
 | Amazon Textract | Converts the PDF into readable text the computer can analyze |
 | Amazon Bedrock | Managed AI that analyzes the text and returns structured output based on the prompt |
-| Amazon DynamoDB | Stores the multi-structured JSON output — more flexible than a relational database like RDS |
-| Amazon SNS | Flags high-risk claims to a human for manual review |
+| Amazon DynamoDB | Stores all claim results as structured JSON — auto-processed claims with medium confidence are flagged for periodic batch review without triggering an alert |
+| Amazon SNS | Dual notification layer — SNS-Internal alerts the claims team for human review, fraud flags, processing errors and missed SLAs. SNS-Claimant notifies the claimant directly when documentation is missing or resubmission is required |
 
