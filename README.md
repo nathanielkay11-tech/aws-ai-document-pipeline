@@ -19,7 +19,15 @@ data comes out — without a human touching it unless the AI flags a risk or fai
 validation check.
 
 ## Architecture Overview
-*Diagram coming — currently in design phase*
+
+```mermaid
+graph LR
+    A[Amazon S3] --> B[AWS Lambda]
+    B --> C[Amazon Textract]
+    C --> D[Amazon Bedrock]
+    D --> E[Amazon DynamoDB]
+    D --> F[Amazon SNS]
+```
 
 ## Project Status
 🔵 Design phase in progress
@@ -35,13 +43,3 @@ validation check.
 | Amazon DynamoDB | Stores the multi-structured JSON output — more flexible than a relational database like RDS |
 | Amazon SNS | Flags high-risk claims to a human for manual review |
 
-## Architecture
-
-```mermaid
-graph LR
-    A[Amazon S3] --> B[AWS Lambda]
-    B --> C[Amazon Textract]
-    C --> D[Amazon Bedrock]
-    D --> E[Amazon DynamoDB]
-    D --> F[Amazon SNS]
-```
