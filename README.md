@@ -34,3 +34,14 @@ validation check.
 | Amazon Bedrock | Managed AI that analyzes the text and returns structured output based on the prompt |
 | Amazon DynamoDB | Stores the multi-structured JSON output — more flexible than a relational database like RDS |
 | Amazon SNS | Flags high-risk claims to a human for manual review |
+
+## Architecture
+
+```mermaid
+graph LR
+    A[Amazon S3] --> B[AWS Lambda]
+    B --> C[Amazon Textract]
+    C --> D[Amazon Bedrock]
+    D --> E[Amazon DynamoDB]
+    D --> F[Amazon SNS]
+```
