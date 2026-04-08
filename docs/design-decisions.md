@@ -37,3 +37,16 @@ granular control over outcomes.
 **Outcome:** See routing matrix in prompts/v1-system-prompt.md.
 processing_error introduced as a fourth recommended_action
 state distinct from human_review.
+
+---
+
+## ADR-004: Custom IAM Policies for Terraform User
+**Date:** 08 April 2026
+**Decision:** Replace AWS managed policies with custom 
+least-privilege policies for all Terraform user permissions.
+**Reason:** AWS managed policies like AmazonS3FullAccess grant 
+significantly more permissions than required. Custom policies 
+explicitly define only the actions Terraform needs to create, 
+manage and destroy resources for this project.
+**Outcome:** 7 custom policies — no AWS managed policies 
+attached to the Terraform user.
