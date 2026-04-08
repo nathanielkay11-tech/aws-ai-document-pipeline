@@ -50,3 +50,18 @@ explicitly define only the actions Terraform needs to create,
 manage and destroy resources for this project.
 **Outcome:** 7 custom policies — no AWS managed policies 
 attached to the Terraform user.
+
+---
+
+## ADR-005: S3 Upload Authentication Out of Scope
+**Date:** 08 April 2026
+**Decision:** Claimant authentication and upload portal are 
+out of scope for this phase.
+**Reason:** Building a full authentication layer (AWS Cognito, 
+pre-signed URLs, web portal) would significantly expand the 
+project scope beyond the core pipeline objective.
+**Outcome:** Bucket remains private. Direct upload assumed 
+via pre-signed URLs. Authentication layer documented as 
+Phase 2 enhancement.
+**Phase 2:** Implement AWS Cognito user pools and pre-signed 
+S3 URLs to enable secure authenticated uploads.
