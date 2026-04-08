@@ -26,7 +26,7 @@ graph LR
     B --> C[Amazon Textract]
     C --> D[Amazon Bedrock]
     D --> E[Amazon DynamoDB]
-    D --> F[Amazon SNS]
+    D --> F[SNS Alert]
 ```
 
 ## Project Status
