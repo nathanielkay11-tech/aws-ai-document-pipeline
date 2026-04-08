@@ -23,3 +23,14 @@ validation check.
 
 ## Project Status
 🔵 Design phase in progress
+
+## Services Used
+
+| Service | Role |
+|---|---|
+| Amazon S3 | The inbox — where claims are uploaded and the pipeline starts |
+| AWS Lambda | The coordinator — connects all services and runs only when needed |
+| Amazon Textract | Converts the PDF into readable text the computer can analyze |
+| Amazon Bedrock | Managed AI that analyzes the text and returns structured output based on the prompt |
+| Amazon DynamoDB | Stores the multi-structured JSON output — more flexible than a relational database like RDS |
+| Amazon SNS | Flags high-risk claims to a human for manual review |
