@@ -1,22 +1,22 @@
 # =============================================================
 # CHANGELOG
-# v1.2 - 09 April 2026
-# CHANGE: Implemented dual PDF processing strategy (ADR-008)
-# REASON: Textract only supports image-based PDFs. Text-based
-# PDFs generated digitally can be extracted directly using
-# pypdf without calling Textract, reducing cost and latency.
-# LOGIC: Lambda detects PDF type on ingestion:
-#   - Text-based PDF -> pypdf direct extraction (no Textract)
-#   - Image-based PDF -> Textract OCR as before
+# v1.3 - 09 April 2026
+# CHANGE: Added sys.path insert to include package/ directory
+# REASON: Lambda extracts zip to /var/task/ but can't find
+# pypdf in the package/ subfolder without explicitly adding
+# it to the Python path at runtime.
 # =============================================================
 
-import json
+import sys
 import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'package'))
+
+import json
 import uuid
 import io
 import boto3
 from datetime import datetime, timezone
-from package.pypdf import PdfReader
+from pypdf import PdfReader
 
 # --- AWS Clients ---
 s3_client = boto3.client('s3')
@@ -94,7 +94,6 @@ def extract_text(pdf_bytes, bucket_name, object_key):
     Image-based PDFs use Textract OCR.
     """
     
-    # Attempt direct text extraction with pypdf
     reader = PdfReader(io.BytesIO(pdf_bytes))
     extracted_text = ''
     
@@ -106,11 +105,9 @@ def extract_text(pdf_bytes, bucket_name, object_key):
     extracted_text = extracted_text.strip()
     
     if extracted_text and len(extracted_text) > 50:
-        # Text-based PDF - pypdf extracted sufficient content
         print(f"Text-based PDF detected - extracted via pypdf, bypassing Textract")
         return extracted_text
     else:
-        # Image-based or scanned PDF - route to Textract
         print(f"Image-based PDF detected - routing to Textract OCR")
         return extract_text_via_textract(bucket_name, object_key)
 
