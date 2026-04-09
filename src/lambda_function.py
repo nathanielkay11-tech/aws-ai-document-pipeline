@@ -1,9 +1,11 @@
 # =============================================================
 # CHANGELOG
-# v1.4 - 09 April 2026
-# CHANGE: Strip markdown code fences from Bedrock response
-# REASON: Claude Sonnet 4.5 wraps JSON in markdown code blocks
-# which breaks json.loads() parsing. Strip before parsing.
+# v1.5 - 09 April 2026
+# CHANGE: Convert float values to Decimal before DynamoDB write
+# REASON: DynamoDB does not support Python float types.
+# Bedrock returns total_amount_claimed as a float which causes
+# a TypeError on put_item. Added convert_floats_to_decimal
+# function called after schema validation and before write.
 # =============================================================
 
 import sys
@@ -14,6 +16,7 @@ import json
 import uuid
 import io
 import boto3
+from decimal import Decimal
 from datetime import datetime, timezone
 from pypdf import PdfReader
 
@@ -62,6 +65,9 @@ def lambda_handler(event, context):
         validated_result['source_document'] = object_key
         validated_result['processed_timestamp'] = datetime.now(timezone.utc).isoformat()
         
+        # Convert floats to Decimal for DynamoDB compatibility
+        validated_result = convert_floats_to_decimal(validated_result)
+        
         # --- STAGE 5: Write to DynamoDB ---
         table = dynamodb.Table(DYNAMODB_TABLE)
         table.put_item(Item=validated_result)
@@ -84,6 +90,20 @@ def lambda_handler(event, context):
         print(f"Pipeline error: {str(e)}")
         handle_processing_error(object_key if 'object_key' in locals() else 'unknown')
         raise
+
+
+def convert_floats_to_decimal(obj):
+    """
+    Recursively convert float values to Decimal for DynamoDB compatibility.
+    DynamoDB does not support Python float types.
+    """
+    if isinstance(obj, float):
+        return Decimal(str(obj))
+    elif isinstance(obj, dict):
+        return {k: convert_floats_to_decimal(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_floats_to_decimal(i) for i in obj]
+    return obj
 
 
 def extract_text(pdf_bytes, bucket_name, object_key):
