@@ -11,12 +11,12 @@ resource "aws_lambda_function" "claims_processor" {
 
   environment {
     variables = {
-      DYNAMODB_TABLE     = var.dynamodb_table_name
-      SNS_INTERNAL_ARN   = aws_sns_topic.claims_internal.arn
-      SNS_CLAIMANT_ARN   = aws_sns_topic.claims_claimant.arn
-      BEDROCK_MODEL_ID   = var.bedrock_model_id
-      RISK_THRESHOLD     = var.risk_threshold
-      ENVIRONMENT        = var.environment
+      DYNAMODB_TABLE   = var.dynamodb_table_name
+      SNS_INTERNAL_ARN = aws_sns_topic.claims_internal.arn
+      SNS_CLAIMANT_ARN = aws_sns_topic.claims_claimant.arn
+      BEDROCK_MODEL_ID = var.bedrock_model_id
+      RISK_THRESHOLD   = var.risk_threshold
+      ENVIRONMENT      = var.environment
     }
   }
 
@@ -35,4 +35,6 @@ resource "aws_lambda_permission" "s3_invoke_lambda" {
   function_name = aws_lambda_function.claims_processor.function_name
   principal     = "s3.amazonaws.com"
   source_arn    = aws_s3_bucket.claims_bucket.arn
+
+  depends_on = [aws_lambda_function.claims_processor]
 }
