@@ -1,8 +1,22 @@
+# =============================================================
+# CHANGELOG
+# v1.2 - 09 April 2026
+# CHANGE: Implemented dual PDF processing strategy (ADR-008)
+# REASON: Textract only supports image-based PDFs. Text-based
+# PDFs generated digitally can be extracted directly using
+# pypdf without calling Textract, reducing cost and latency.
+# LOGIC: Lambda detects PDF type on ingestion:
+#   - Text-based PDF -> pypdf direct extraction (no Textract)
+#   - Image-based PDF -> Textract OCR as before
+# =============================================================
+
 import json
 import os
 import uuid
+import io
 import boto3
 from datetime import datetime, timezone
+from package.pypdf import PdfReader
 
 # --- AWS Clients ---
 s3_client = boto3.client('s3')
@@ -28,24 +42,14 @@ def lambda_handler(event, context):
         
         print(f"Processing file: {object_key} from bucket: {bucket_name}")
         
-        # --- STAGE 2: OCR via Textract ---
-        textract_response = textract_client.detect_document_text(
-            Document={
-                'S3Object': {
-                    'Bucket': bucket_name,
-                    'Name': object_key
-                }
-            }
-        )
+        # Download PDF from S3 into memory
+        s3_response = s3_client.get_object(Bucket=bucket_name, Key=object_key)
+        pdf_bytes = s3_response['Body'].read()
         
-        # Extract raw text from Textract response
-        raw_text = ' '.join([
-            block['Text'] 
-            for block in textract_response['Blocks'] 
-            if block['BlockType'] == 'LINE'
-        ])
+        # --- STAGE 2: Detect PDF type and extract text ---
+        raw_text = extract_text(pdf_bytes, bucket_name, object_key)
         
-        print(f"Textract extracted {len(raw_text)} characters")
+        print(f"Extracted {len(raw_text)} characters from document")
         
         # --- STAGE 3: AI Inference via Bedrock ---
         claim_result = invoke_bedrock(raw_text)
@@ -83,10 +87,60 @@ def lambda_handler(event, context):
         raise
 
 
+def extract_text(pdf_bytes, bucket_name, object_key):
+    """
+    Detect PDF type and extract text accordingly.
+    Text-based PDFs use pypdf directly.
+    Image-based PDFs use Textract OCR.
+    """
+    
+    # Attempt direct text extraction with pypdf
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    extracted_text = ''
+    
+    for page in reader.pages:
+        page_text = page.extract_text()
+        if page_text:
+            extracted_text += page_text + ' '
+    
+    extracted_text = extracted_text.strip()
+    
+    if extracted_text and len(extracted_text) > 50:
+        # Text-based PDF - pypdf extracted sufficient content
+        print(f"Text-based PDF detected - extracted via pypdf, bypassing Textract")
+        return extracted_text
+    else:
+        # Image-based or scanned PDF - route to Textract
+        print(f"Image-based PDF detected - routing to Textract OCR")
+        return extract_text_via_textract(bucket_name, object_key)
+
+
+def extract_text_via_textract(bucket_name, object_key):
+    """Extract text from image-based PDFs using Textract."""
+    
+    textract_response = textract_client.analyze_document(
+        Document={
+            'S3Object': {
+                'Bucket': bucket_name,
+                'Name': object_key
+            }
+        },
+        FeatureTypes=['TABLES', 'FORMS']
+    )
+    
+    raw_text = ' '.join([
+        block['Text']
+        for block in textract_response['Blocks']
+        if block['BlockType'] == 'LINE' and 'Text' in block
+    ])
+    
+    print(f"Textract extracted {len(raw_text)} characters")
+    return raw_text
+
+
 def invoke_bedrock(raw_text, attempt=1):
     """Call Bedrock with retry logic on JSON validation failure."""
     
-    # Load system prompt
     system_prompt = """Role: You are a senior insurance claims specialist with expertise in 
     fraud detection, risk assessment, and claims compliance.
     
@@ -178,7 +232,6 @@ def route_claim(result):
     claim_id = result.get('claim_id')
     
     if recommended_action == 'human_review':
-        # Route to internal claims team
         message = f"""
         CLAIMS REVIEW REQUIRED
         Claim ID: {claim_id}
@@ -196,7 +249,6 @@ def route_claim(result):
         print(f"Internal SNS alert sent for claim {claim_id}")
         
     elif recommended_action == 'pending_documentation':
-        # Notify claimant of missing documentation
         message = f"""
         Dear {result.get('claimant_name', 'Claimant')},
         
@@ -225,14 +277,12 @@ def route_claim(result):
 def handle_processing_error(reference):
     """Handle pipeline failures with dual SNS notification."""
     
-    # Internal alert
     sns_client.publish(
         TopicArn=SNS_INTERNAL_ARN,
         Subject=f"PIPELINE ERROR - {reference}",
         Message=f"Claims pipeline failed to process document: {reference}. Manual intervention required."
     )
     
-    # Claimant notification
     sns_client.publish(
         TopicArn=SNS_CLAIMANT_ARN,
         Subject="Claim Submission Issue",
