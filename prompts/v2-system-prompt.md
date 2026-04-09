@@ -1,5 +1,7 @@
 # Prompt Version 2
 
+*Personal observations and reflections from first live test run — 09 April 2026.*
+
 ## Date
 09 April 2026
 

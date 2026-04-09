@@ -138,3 +138,15 @@ as a Phase 2 enhancement (see ADR-005).
 supported in this version. The pipeline handles typed digital PDFs 
 and scanned printed forms. Full handwriting detection is documented 
 as a Phase 2 enhancement (see ADR-009).
+
+## Development Approach
+
+This project was developed using an AI-assisted workflow. Claude 
+(Anthropic) was used as a technical sounding board throughout the 
+build — helping with code structure, troubleshooting, and 
+documentation. All architectural decisions, business logic, 
+security considerations and project direction were driven by me.
+
+This reflects how modern cloud engineers actually work in 2026 — 
+knowing how to leverage AI tools effectively is itself a 
+professional skill.
