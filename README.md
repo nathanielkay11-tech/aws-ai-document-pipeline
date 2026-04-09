@@ -38,7 +38,7 @@ graph LR
 
 ## Project Status
 
-🟢 Infrastructure deployed — moving to testing phase
+🟢 Pipeline deployed and tested — first claim successfully processed
 
 ## Services Used
 
