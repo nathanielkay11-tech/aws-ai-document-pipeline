@@ -54,3 +54,14 @@ graph LR
 bypasses Textract for digitally created documents, 
 reducing cost and latency |
 
+## Known Limitations
+
+- **Claimant authentication** — direct S3 upload assumes a secure 
+upload mechanism exists. A full authentication layer using AWS Cognito 
+and pre-signed S3 URLs is out of scope for this version and documented 
+as a Phase 2 enhancement (see ADR-005).
+
+- **Handwritten documents** — fully handwritten claim forms are not 
+supported in this version. The pipeline handles typed digital PDFs 
+and scanned printed forms. Full handwriting detection is documented 
+as a Phase 2 enhancement (see ADR-009).
