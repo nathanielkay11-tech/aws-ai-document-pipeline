@@ -141,3 +141,22 @@ versioning. Text extraction relies on pypdf for digital PDFs
 and Textract OCR for scanned printed forms only.
 **Phase 2:** Implement Textract Queries and handwriting 
 detection to support fully handwritten claim submissions.
+
+---
+
+## ADR-010: SLA Reminder Notifications — Phase 2
+**Date:** 09 April 2026
+**Decision:** Automated SLA reminder notifications deferred to Phase 2.
+**Reason:** Implementing scheduled reminders requires Amazon EventBridge 
+Scheduler, a dedicated reminder Lambda function, a claim resolution 
+status field in DynamoDB, and additional IAM permissions. This adds 
+significant scope beyond the core pipeline objective.
+**Phase 2 Implementation:**
+- Add resolved_status field to DynamoDB schema
+- Create reminder Lambda function to check resolution status
+- Configure EventBridge Scheduler to trigger reminder Lambda 
+  at SLA deadline minus 5 business days
+- If claim unresolved — fire SNS reminder to claims manager
+- If claim resolved — no action taken
+**Outcome:** SLA deadline date included in current email notification.
+Reminder capability documented for Phase 2 development.
