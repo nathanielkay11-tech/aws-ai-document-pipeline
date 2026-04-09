@@ -65,3 +65,31 @@ via pre-signed URLs. Authentication layer documented as
 Phase 2 enhancement.
 **Phase 2:** Implement AWS Cognito user pools and pre-signed 
 S3 URLs to enable secure authenticated uploads.
+
+---
+
+## ADR-006: Iterative IAM Permission Discovery
+**Date:** 08 April 2026
+**Decision:** Accept that custom IAM policies require iterative 
+refinement during initial Terraform deployment.
+**Reason:** Terraform requires additional tagging permissions 
+beyond core resource management that are only discovered during 
+the first apply attempt. This is expected behaviour when following 
+least-privilege custom policy approach.
+**Outcome:** Missing tagging permissions added to each custom 
+policy after first apply attempt.
+
+---
+
+## ADR-007: S3 Full Access for Terraform User
+**Date:** 08 April 2026
+**Decision:** Replace custom TerraformS3Access policy with 
+AmazonS3FullAccess for the Terraform user.
+**Reason:** Terraform's AWS provider reads numerous S3 bucket 
+attributes during state management regardless of which features 
+are configured. Maintaining granular permissions requires 
+adding permissions iteratively for every Terraform operation 
+which is operationally impractical.
+**Outcome:** Terraform user uses AmazonS3FullAccess. 
+Lambda execution role retains strict least-privilege 
+s3:GetObject only. Security posture maintained at runtime.
