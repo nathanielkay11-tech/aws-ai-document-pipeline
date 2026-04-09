@@ -171,15 +171,24 @@ information is not present in the document.
 }
 
 ## Known Limitations
-- Not yet tested against real documents
 - Prior claims detection relies on document content only —
   no database lookup at this stage
 - Document alteration detection relies on text inconsistencies
   only — no image analysis at this stage
 - Confidence scoring is AI self-assessed — not externally validated
-- SLA escalation timers are handled by Lambda, not this prompt
-- Retry logic is implemented in Lambda, not the prompt itself
-- To be refined after initial Bedrock integration testing
+- SLA escalation timers handled by Lambda, not this prompt
+- Retry logic implemented in Lambda, not this prompt
+- Fully handwritten documents not supported — text extraction
+  relies on pypdf for digital PDFs and Textract OCR for
+  scanned printed forms only
+- Claimant authentication out of scope — see ADR-005
+
+## Testing Notes
+- v1 prompt tested successfully on 09 April 2026
+- Text-based PDF processed end to end with high confidence
+- Risk flag triggered correctly on $60,520 claim
+- JSON schema compliance confirmed
+- Refined in v2 based on real test observations
 
 ## Next Version Goals (v2)
 - Test against 3-5 real sample claim PDFs
