@@ -27,7 +27,7 @@ resource "aws_sns_topic" "claims_claimant" {
 resource "aws_sns_topic_subscription" "internal_email" {
   topic_arn = aws_sns_topic.claims_internal.arn
   protocol  = "email"
-  endpoint  = "internal-claims-team@example.com"
+  endpoint  = "nathanielkay11@gmail.com"
 }
 
 # --- SNS Subscription: Claimant Email Notification ---
@@ -35,5 +35,5 @@ resource "aws_sns_topic_subscription" "internal_email" {
 resource "aws_sns_topic_subscription" "claimant_email" {
   topic_arn = aws_sns_topic.claims_claimant.arn
   protocol  = "email"
-  endpoint  = "claimant-notifications@example.com"
+  endpoint  = "nathanielkay11@gmail.com"
 }
