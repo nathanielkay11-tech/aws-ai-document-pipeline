@@ -7,7 +7,7 @@ variable "region" {
 variable "bedrock_model_id" {
   description = "The Bedrock model ID to use - requires cross-region inference profile prefix"
   type        = string
-  default     = "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
+  default     = "us.anthropic.claude-3-sonnet-20240229-v1:0"
 }
 
 variable "s3_bucket_name" {
