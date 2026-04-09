@@ -42,6 +42,8 @@ graph LR
 
 ## Testing Results
 
+## Testing Results
+
 ### Test 1 — Text-based PDF (09 April 2026)
 
 **Document:** Sample insurance claim — Northgate Insurance Group  
@@ -51,26 +53,43 @@ graph LR
 
 ---
 
-**Stage 1 & 2 — PDF Extraction via pypdf**
+**Stage 1 — S3 Upload Trigger**
 
-4,005 characters extracted directly from the text-based PDF. 
-Textract bypassed entirely — reducing cost and latency.
+Claim PDF uploaded to `claims-pipeline-nk` S3 bucket,
+automatically triggering the Lambda pipeline.
 
-![CloudWatch Logs showing successful PDF extraction](architecture/test1-cloudwatch-logs.png)
+![S3 bucket showing uploaded claim PDF](architecture/test1-s3-upload.png)
 
 ---
 
-**Stage 3 & 4 — Bedrock AI Analysis**
+**Stage 2 — PDF Type Detection and Text Extraction**
 
-Claude Sonnet 4.5 analyzed the claim and returned a high confidence 
-structured JSON output. Risk flag triggered correctly — amount of 
-$60,520 exceeds the $50,000 threshold. Prior claim history detected.
+Text-based PDF detected automatically. 4,005 characters extracted
+directly via pypdf — Textract bypassed entirely, reducing cost and latency.
+
+![CloudWatch logs showing successful PDF extraction](architecture/test1-cloudwatch-logs.png)
+
+---
+
+**Stage 3 — Bedrock AI Analysis**
+
+Claude Sonnet 4.5 analyzed the extracted text and returned a high
+confidence structured JSON output. Risk flag triggered correctly —
+amount of $60,520 exceeds the $50,000 threshold. Prior claim
+history detected.
+
+---
+
+**Stage 4 — Schema Validation**
+
+All required fields present and validated before DynamoDB write.
+Float values converted to Decimal for DynamoDB compatibility.
 
 ---
 
 **Stage 5 — DynamoDB Storage**
 
-Claim record written successfully with all extracted fields, 
+Claim record written successfully with all extracted fields,
 risk flags, confidence scores and SLA deadline.
 
 ![DynamoDB claim record](architecture/test1-dynamodb-record-1.png)
@@ -81,18 +100,19 @@ risk flags, confidence scores and SLA deadline.
 
 **Stage 6 — SNS Alert Delivered**
 
-Claim routed to human review at HIGH priority. Email delivered 
-with full structured assessment and SLA deadline of 19 April 2026.
+Claim routed to human review at HIGH priority. Professional email
+delivered with full structured assessment and SLA deadline of
+19 April 2026.
 
 ![SNS email alert received by claims manager](architecture/test1-email-alert.png)
 
 ---
 
 **Bedrock Assessment:**  
-High-value claim with comprehensive documentation. Prior claim 
-history disclosed (CLM-2023-00412, $4,200 roof repair 2023). 
-Filed 18 days post-incident — reasonable given complexity. 
-No fraud indicators detected. Human review required for 
+High-value claim with comprehensive documentation. Prior claim
+history disclosed (CLM-2023-00412, $4,200 roof repair 2023).
+Filed 18 days post-incident — reasonable given complexity.
+No fraud indicators detected. Human review required for
 approval authority.
 
 ## Services Used
