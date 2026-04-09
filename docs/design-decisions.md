@@ -93,3 +93,33 @@ which is operationally impractical.
 **Outcome:** Terraform user uses AmazonS3FullAccess. 
 Lambda execution role retains strict least-privilege 
 s3:GetObject only. Security posture maintained at runtime.
+
+---
+
+## ADR-008: Managed vs Custom IAM Policies for Terraform User
+**Date:** 08 April 2026
+**Decision:** Use AWS managed policies for all Terraform user 
+service permissions except IAM and Bedrock which retain 
+custom policies.
+**Reason:** Terraform's AWS provider reads extensive resource 
+attributes during state management that require permissions 
+beyond core resource operations. Discovered during initial 
+terraform apply attempts. Fighting Terraform's internal state 
+management permissions one at a time is not a productive use 
+of engineering time.
+**Exception — IAM:** IAMFullAccess was not used due to 
+privilege escalation risk. A scoped custom policy was 
+maintained covering only the specific IAM actions required 
+by Terraform to create and manage the Lambda execution role 
+and its associated policies.
+**Exception — Bedrock:** BedrockSafeDeveloperAccess retained 
+as it was purpose-built to prevent expensive provisioned 
+throughput actions while allowing model invocation.
+**Outcome:** 
+- S3, SNS, DynamoDB, Lambda, Textract — AWS managed policies
+- IAM — custom scoped policy
+- Bedrock — custom safe developer policy
+- Lambda execution role — unchanged, strict least-privilege
+**Learning:** In production environments, deployment tooling 
+users and runtime users have different permission requirements. 
+Security focus belongs on runtime identities, not build tooling.
