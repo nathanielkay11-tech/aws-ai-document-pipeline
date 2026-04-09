@@ -23,14 +23,17 @@ validation check.
 ```mermaid
 graph LR
     A[Amazon S3] --> B[AWS Lambda]
-    B --> C[Amazon Textract]
-    C --> D[Amazon Bedrock]
-    D --> E[Amazon DynamoDB]
-    D --> F[SNS Internal]
-    D --> G[SNS Claimant]
-    F --> H[Claims Manager]
-    G --> I[Claimant]
-    E --> J[Audit Review]
+    B --> C{PDF Type?}
+    C -->|Text-based| D[pypdf Direct Extract]
+    C -->|Image-based| E[Amazon Textract]
+    D --> F[Amazon Bedrock]
+    E --> F[Amazon Bedrock]
+    F --> G[Amazon DynamoDB]
+    F --> H[SNS Internal]
+    F --> I[SNS Claimant]
+    H --> J[Claims Manager]
+    I --> K[Claimant]
+    G --> L[Audit Review]
 ```
 
 ## Project Status
@@ -47,4 +50,7 @@ graph LR
 | Amazon Bedrock | Managed AI that analyzes the text and returns structured output based on the prompt |
 | Amazon DynamoDB | Stores all claim results as structured JSON — auto-processed claims with medium confidence are flagged for periodic batch review without triggering an alert |
 | Amazon SNS | Dual notification layer — SNS-Internal alerts the claims team for human review, fraud flags, processing errors and missed SLAs. SNS-Claimant notifies the claimant directly when documentation is missing or resubmission is required |
+| pypdf | Extracts text directly from text-based PDFs — 
+bypasses Textract for digitally created documents, 
+reducing cost and latency |
 
