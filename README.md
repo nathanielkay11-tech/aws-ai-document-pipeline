@@ -40,6 +40,40 @@ graph LR
 
 🟢 Pipeline deployed and tested — first claim successfully processed
 
+## Testing Results
+
+### Test 1 — Text-based PDF (09 April 2026)
+**Document:** Sample insurance claim — Northgate Insurance Group  
+**Claimant:** James Robert Harrington  
+**Amount:** $60,520.00  
+**Result:** Pipeline processed successfully end to end  
+
+**Pipeline performance:**
+- PDF type detected correctly — pypdf extraction, Textract bypassed
+- 4,005 characters extracted from document
+- Bedrock returned high confidence analysis
+- Risk flag triggered correctly — amount exceeds $50,000 threshold
+- Prior claim detected — CLM-2023-00412
+- Routed to human review — HIGH priority
+- DynamoDB write successful
+- SNS alert delivered with correct SLA deadline (19 April 2026)
+
+**Bedrock assessment:**  
+High-value claim with comprehensive documentation. Prior claim 
+history disclosed. Filed 18 days post-incident — reasonable given 
+complexity. No fraud indicators detected. Human review required 
+for approval authority.
+
+**Evidence:**
+
+![Email Alert](architecture/test1-email-alert.png)
+
+![DynamoDB Record](architecture/test1-dynamodb-record-1.png)
+
+![DynamoDB Record](architecture/test1-dynamodb-record-2.png)
+
+![CloudWatch Logs](architecture/test1-cloudwatch-logs.png)
+
 ## Services Used
 
 | Service | Role |
