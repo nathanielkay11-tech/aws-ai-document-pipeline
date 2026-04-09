@@ -50,7 +50,10 @@ resource "aws_iam_policy" "lambda_policy" {
         Sid    = "BedrockAccess"
         Effect = "Allow"
         Action = ["bedrock:InvokeModel"]
-        Resource = "arn:aws:bedrock:*::foundation-model/*"
+        Resource = [
+          "arn:aws:bedrock:*::foundation-model/*",
+          "arn:aws:bedrock:*:251478237846:inference-profile/*"
+        ]
       },
       {
         Sid    = "DynamoDBWriteAccess"
