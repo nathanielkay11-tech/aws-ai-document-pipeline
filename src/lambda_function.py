@@ -1,10 +1,9 @@
 # =============================================================
 # CHANGELOG
-# v1.3 - 09 April 2026
-# CHANGE: Added sys.path insert to include package/ directory
-# REASON: Lambda extracts zip to /var/task/ but can't find
-# pypdf in the package/ subfolder without explicitly adding
-# it to the Python path at runtime.
+# v1.4 - 09 April 2026
+# CHANGE: Strip markdown code fences from Bedrock response
+# REASON: Claude Sonnet 4.5 wraps JSON in markdown code blocks
+# which breaks json.loads() parsing. Strip before parsing.
 # =============================================================
 
 import sys
@@ -166,7 +165,7 @@ def invoke_bedrock(raw_text, attempt=1):
         "sla_deadline": "string"
     }
     
-    Constraint: Return ONLY valid JSON. No explanation or preamble. Use null for missing fields."""
+    Constraint: Return ONLY valid JSON. No explanation, no preamble, no markdown code fences. Use null for missing fields."""
     
     response = bedrock_client.invoke_model(
         modelId=BEDROCK_MODEL_ID,
@@ -188,14 +187,23 @@ def invoke_bedrock(raw_text, attempt=1):
     response_body = json.loads(response['body'].read())
     result_text = response_body['content'][0]['text']
     
+    # Strip markdown code fences if present
+    clean_text = result_text.strip()
+    if clean_text.startswith('```'):
+        clean_text = clean_text.split('```')[1]
+        if clean_text.startswith('json'):
+            clean_text = clean_text[4:]
+    clean_text = clean_text.strip()
+    
     try:
-        return json.loads(result_text)
+        return json.loads(clean_text)
     except json.JSONDecodeError:
         if attempt < 2:
             print(f"JSON parse failed on attempt {attempt}, retrying...")
             return invoke_bedrock(raw_text, attempt=2)
         else:
-            print("JSON parse failed after 2 attempts")
+            print(f"JSON parse failed after 2 attempts")
+            print(f"Raw response: {result_text[:500]}")
             raise ValueError("Bedrock returned invalid JSON after 2 attempts")
 
 
