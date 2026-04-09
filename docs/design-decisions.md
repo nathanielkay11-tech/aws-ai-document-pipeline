@@ -125,3 +125,19 @@ PDFs bypass Textract entirely reducing cost and latency.
 Image-based and scanned PDFs route through Textract as before.
 **Phase 2:** Extend to support fully handwritten documents
 using Textract Queries and handwriting detection features.
+
+---
+
+## ADR-009: Handwritten Document Support Out of Scope
+**Date:** 09 April 2026
+**Decision:** Fully handwritten claim forms are not supported 
+in this version of the pipeline.
+**Reason:** Textract's handwriting detection and Queries API 
+require additional configuration and testing beyond the scope 
+of this initial build. The pipeline handles typed digital PDFs 
+and scanned printed forms reliably.
+**Outcome:** Known limitation documented in README and prompt 
+versioning. Text extraction relies on pypdf for digital PDFs 
+and Textract OCR for scanned printed forms only.
+**Phase 2:** Implement Textract Queries and handwriting 
+detection to support fully handwritten claim submissions.
