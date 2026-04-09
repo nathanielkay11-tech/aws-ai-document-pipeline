@@ -1,11 +1,13 @@
 # =============================================================
 # CHANGELOG
-# v1.5 - 09 April 2026
-# CHANGE: Convert float values to Decimal before DynamoDB write
-# REASON: DynamoDB does not support Python float types.
-# Bedrock returns total_amount_claimed as a float which causes
-# a TypeError on put_item. Added convert_floats_to_decimal
-# function called after schema validation and before write.
+# v1.6 - 09 April 2026
+# CHANGE: Improved SNS email formatting and subject lines
+# REASON: Plain text output was unprofessional for a claims
+# manager receiving actionable alerts. Updated to include:
+# - Priority-based subject lines e.g. [CRITICAL PRIORITY]
+# - Structured email body with clear sections
+# - Exact SLA deadline date calculated from processed timestamp
+# - Phase 2 note for automated SLA reminders via EventBridge
 # =============================================================
 
 import sys
@@ -17,7 +19,7 @@ import uuid
 import io
 import boto3
 from decimal import Decimal
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pypdf import PdfReader
 
 # --- AWS Clients ---
@@ -61,10 +63,22 @@ def lambda_handler(event, context):
         
         # Add processing metadata
         claim_id = str(uuid.uuid4())
+        processed_timestamp = datetime.now(timezone.utc)
         validated_result['claim_id'] = claim_id
         validated_result['source_document'] = object_key
-        validated_result['processed_timestamp'] = datetime.now(timezone.utc).isoformat()
+        validated_result['processed_timestamp'] = processed_timestamp.isoformat()
         
+        # Calculate SLA deadline based on recommended action
+        sla_days = {
+            'human_review': 10,
+            'pending_documentation': 5,
+            'auto_process': 1,
+            'processing_error': 0
+        }
+        days = sla_days.get(validated_result.get('recommended_action'), 10)
+        sla_deadline = processed_timestamp + timedelta(days=days)
+        validated_result['sla_deadline'] = sla_deadline.strftime('%d %B %Y')
+
         # Convert floats to Decimal for DynamoDB compatibility
         validated_result = convert_floats_to_decimal(validated_result)
         
@@ -93,10 +107,7 @@ def lambda_handler(event, context):
 
 
 def convert_floats_to_decimal(obj):
-    """
-    Recursively convert float values to Decimal for DynamoDB compatibility.
-    DynamoDB does not support Python float types.
-    """
+    """Recursively convert float values to Decimal for DynamoDB compatibility."""
     if isinstance(obj, float):
         return Decimal(str(obj))
     elif isinstance(obj, dict):
@@ -112,7 +123,6 @@ def extract_text(pdf_bytes, bucket_name, object_key):
     Text-based PDFs use pypdf directly.
     Image-based PDFs use Textract OCR.
     """
-    
     reader = PdfReader(io.BytesIO(pdf_bytes))
     extracted_text = ''
     
@@ -133,7 +143,6 @@ def extract_text(pdf_bytes, bucket_name, object_key):
 
 def extract_text_via_textract(bucket_name, object_key):
     """Extract text from image-based PDFs using Textract."""
-    
     textract_response = textract_client.analyze_document(
         Document={
             'S3Object': {
@@ -229,7 +238,6 @@ def invoke_bedrock(raw_text, attempt=1):
 
 def validate_schema(result):
     """Validate that required fields are present in Bedrock response."""
-    
     required_fields = [
         'claimant_name', 'policy_number', 'incident_date',
         'total_amount_claimed', 'risk_flag', 'confidence',
@@ -248,76 +256,181 @@ def validate_schema(result):
     return result
 
 
+def format_amount(amount):
+    """Format amount as currency string."""
+    try:
+        return f"${float(amount):,.2f}"
+    except:
+        return str(amount)
+
+
+def get_subject_line(priority, claim_id):
+    """Generate priority-based subject line."""
+    prefix = {
+        'critical': '[CRITICAL PRIORITY] Immediate Action Required',
+        'high':     '[HIGH PRIORITY] Claim Review Required',
+        'medium':   '[MEDIUM PRIORITY] Claim Review Required',
+        'low':      '[LOW PRIORITY] Claim Review Required'
+    }
+    label = prefix.get(priority.lower(), '[REVIEW REQUIRED] Claim Alert')
+    return f"{label} - {claim_id}"
+
+
 def route_claim(result):
     """Route claim to appropriate SNS topic based on routing matrix."""
     
     recommended_action = result.get('recommended_action')
-    priority = result.get('priority')
-    confidence = result.get('confidence')
+    priority = result.get('priority', 'high')
+    confidence = result.get('confidence', 'medium')
     claim_id = result.get('claim_id')
-    
+    sla_deadline = result.get('sla_deadline', 'N/A')
+    amount = format_amount(result.get('total_amount_claimed'))
+
     if recommended_action == 'human_review':
+        subject = get_subject_line(priority, claim_id)
         message = f"""
-        CLAIMS REVIEW REQUIRED
-        Claim ID: {claim_id}
-        Priority: {priority}
-        Confidence: {confidence}
-        Action Required: {result.get('audit_note')}
-        Claimant: {result.get('claimant_name')}
-        Amount: {result.get('total_amount_claimed')}
+CLAIMS REVIEW REQUIRED
+{'=' * 60}
+
+CLAIM DETAILS
+Claim Reference:  {claim_id}
+Claimant:         {result.get('claimant_name', 'N/A')}
+Policy Number:    {result.get('policy_number', 'N/A')}
+Claim Type:       {result.get('claim_type', 'N/A')}
+Date of Incident: {result.get('incident_date', 'N/A')}
+Date Filed:       {result.get('claim_filed_date', 'N/A')}
+Amount Claimed:   {amount}
+
+{'=' * 60}
+ASSESSMENT
+Confidence:       {confidence.upper()}
+Priority:         {priority.upper()}
+Recommendation:   Human Review Required
+
+{'=' * 60}
+REASON FOR REVIEW
+{result.get('audit_note', 'N/A')}
+
+{'=' * 60}
+SLA INFORMATION
+Review Deadline:  {sla_deadline}
+Time Allowed:     10 business days from receipt
+
+Note: An automated reminder will be sent 5 business days
+before the SLA deadline if this claim remains unresolved.
+(Phase 2 — EventBridge Scheduler)
+
+{'=' * 60}
+This is an automated notification from the Northgate
+Insurance AI Claims Processing Pipeline.
+Do not reply to this email.
         """
         sns_client.publish(
             TopicArn=SNS_INTERNAL_ARN,
-            Subject=f"[{priority.upper()}] Claim Review Required - {claim_id}",
+            Subject=subject,
             Message=message
         )
         print(f"Internal SNS alert sent for claim {claim_id}")
-        
+
     elif recommended_action == 'pending_documentation':
         message = f"""
-        Dear {result.get('claimant_name', 'Claimant')},
-        
-        Your insurance claim requires additional documentation to proceed.
-        
-        Claim Reference: {claim_id}
-        Action Required: {result.get('audit_note')}
-        
-        Please resubmit your claim with the required documentation 
-        within 5 business days.
+ADDITIONAL DOCUMENTATION REQUIRED
+{'=' * 60}
+
+Dear {result.get('claimant_name', 'Claimant')},
+
+Your insurance claim submission has been received and reviewed.
+Additional documentation is required before your claim can
+be processed.
+
+CLAIM DETAILS
+Claim Reference:  {claim_id}
+Amount Claimed:   {amount}
+Date Filed:       {result.get('claim_filed_date', 'N/A')}
+
+{'=' * 60}
+ACTION REQUIRED
+{result.get('audit_note', 'N/A')}
+
+{'=' * 60}
+IMPORTANT — RESPONSE DEADLINE
+Please resubmit your claim with the required documentation
+within 5 business days of this notification.
+
+Response Deadline: {sla_deadline}
+
+Failure to respond by this date may result in your claim
+being suspended pending further review.
+
+{'=' * 60}
+This is an automated notification from the Northgate
+Insurance Claims Processing System.
+For assistance please contact claims@northgateinsurance.com
         """
         sns_client.publish(
             TopicArn=SNS_CLAIMANT_ARN,
-            Subject=f"Action Required - Claim {claim_id}",
+            Subject=f"Action Required — Claim {claim_id}",
             Message=message
         )
         print(f"Claimant SNS notification sent for claim {claim_id}")
-        
+
     elif recommended_action == 'auto_process':
-        print(f"Claim {claim_id} auto-processed - no SNS required")
-        
+        print(f"Claim {claim_id} auto-processed — no SNS required")
+
     elif recommended_action == 'processing_error':
         handle_processing_error(claim_id)
 
 
 def handle_processing_error(reference):
     """Handle pipeline failures with dual SNS notification."""
-    
     sns_client.publish(
         TopicArn=SNS_INTERNAL_ARN,
-        Subject=f"PIPELINE ERROR - {reference}",
-        Message=f"Claims pipeline failed to process document: {reference}. Manual intervention required."
+        Subject=f"[PIPELINE ERROR] Processing Failed - {reference}",
+        Message=f"""
+PIPELINE ERROR — MANUAL INTERVENTION REQUIRED
+{'=' * 60}
+
+The claims pipeline failed to process the following document:
+
+Reference: {reference}
+
+Please investigate the CloudWatch logs for this Lambda
+function and reprocess the document manually if required.
+
+{'=' * 60}
+This is an automated error notification from the Northgate
+Insurance AI Claims Processing Pipeline.
+        """
     )
     
     sns_client.publish(
         TopicArn=SNS_CLAIMANT_ARN,
-        Subject="Claim Submission Issue",
+        Subject=f"Claim Submission Issue — Action Required",
         Message=f"""
-        We were unable to process your claim document.
-        
-        Reference: {reference}
-        
-        Please resubmit a clearer copy of your document.
-        If the issue persists please contact our claims team directly.
+CLAIM SUBMISSION ISSUE
+{'=' * 60}
+
+Dear Claimant,
+
+We were unable to process your recent claim document
+submission. This may be due to document quality or format.
+
+Reference: {reference}
+
+{'=' * 60}
+ACTION REQUIRED
+Please resubmit a clearer copy of your document.
+
+Accepted formats: PDF (typed or scanned)
+Maximum file size: 10MB
+
+If the issue persists please contact our claims team:
+claims@northgateinsurance.com
+Tel: 1-800-555-0192
+
+{'=' * 60}
+This is an automated notification from the Northgate
+Insurance Claims Processing System.
         """
     )
     
