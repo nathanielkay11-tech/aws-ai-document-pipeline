@@ -34,7 +34,8 @@ graph LR
 ```
 
 ## Project Status
-🟡 Design phase complete — moving to infrastructure build
+
+🟢 Infrastructure deployed — moving to testing phase
 
 ## Services Used
 
