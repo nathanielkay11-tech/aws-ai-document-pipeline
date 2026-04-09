@@ -43,36 +43,57 @@ graph LR
 ## Testing Results
 
 ### Test 1 — Text-based PDF (09 April 2026)
+
 **Document:** Sample insurance claim — Northgate Insurance Group  
 **Claimant:** James Robert Harrington  
 **Amount:** $60,520.00  
 **Result:** Pipeline processed successfully end to end  
 
-**Pipeline performance:**
-- PDF type detected correctly — pypdf extraction, Textract bypassed
-- 4,005 characters extracted from document
-- Bedrock returned high confidence analysis
-- Risk flag triggered correctly — amount exceeds $50,000 threshold
-- Prior claim detected — CLM-2023-00412
-- Routed to human review — HIGH priority
-- DynamoDB write successful
-- SNS alert delivered with correct SLA deadline (19 April 2026)
+---
 
-**Bedrock assessment:**  
+**Stage 1 & 2 — PDF Extraction via pypdf**
+
+4,005 characters extracted directly from the text-based PDF. 
+Textract bypassed entirely — reducing cost and latency.
+
+![CloudWatch Logs showing successful PDF extraction](architecture/test1-cloudwatch-logs.png)
+
+---
+
+**Stage 3 & 4 — Bedrock AI Analysis**
+
+Claude Sonnet 4.5 analyzed the claim and returned a high confidence 
+structured JSON output. Risk flag triggered correctly — amount of 
+$60,520 exceeds the $50,000 threshold. Prior claim history detected.
+
+---
+
+**Stage 5 — DynamoDB Storage**
+
+Claim record written successfully with all extracted fields, 
+risk flags, confidence scores and SLA deadline.
+
+![DynamoDB claim record](architecture/test1-dynamodb-record-1.png)
+
+![DynamoDB claim record continued](architecture/test1-dynamodb-record-2.png)
+
+---
+
+**Stage 6 — SNS Alert Delivered**
+
+Claim routed to human review at HIGH priority. Email delivered 
+with full structured assessment and SLA deadline of 19 April 2026.
+
+![SNS email alert received by claims manager](architecture/test1-email-alert.png)
+
+---
+
+**Bedrock Assessment:**  
 High-value claim with comprehensive documentation. Prior claim 
-history disclosed. Filed 18 days post-incident — reasonable given 
-complexity. No fraud indicators detected. Human review required 
-for approval authority.
-
-**Evidence:**
-
-![Email Alert](architecture/test1-email-alert.png)
-
-![DynamoDB Record](architecture/test1-dynamodb-record-1.png)
-
-![DynamoDB Record](architecture/test1-dynamodb-record-2.png)
-
-![CloudWatch Logs](architecture/test1-cloudwatch-logs.png)
+history disclosed (CLM-2023-00412, $4,200 roof repair 2023). 
+Filed 18 days post-incident — reasonable given complexity. 
+No fraud indicators detected. Human review required for 
+approval authority.
 
 ## Services Used
 
