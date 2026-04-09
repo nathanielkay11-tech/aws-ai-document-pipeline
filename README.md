@@ -50,9 +50,7 @@ graph LR
 | Amazon Bedrock | Managed AI that analyzes the text and returns structured output based on the prompt |
 | Amazon DynamoDB | Stores all claim results as structured JSON — auto-processed claims with medium confidence are flagged for periodic batch review without triggering an alert |
 | Amazon SNS | Dual notification layer — SNS-Internal alerts the claims team for human review, fraud flags, processing errors and missed SLAs. SNS-Claimant notifies the claimant directly when documentation is missing or resubmission is required |
-| pypdf | Extracts text directly from text-based PDFs — 
-bypasses Textract for digitally created documents, 
-reducing cost and latency |
+| pypdf | Extracts text directly from text-based PDFs — bypasses Textract for digitally created documents, reducing cost and latency |
 
 ## Known Limitations
 
