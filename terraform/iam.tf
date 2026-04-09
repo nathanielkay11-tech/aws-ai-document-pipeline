@@ -32,9 +32,9 @@ resource "aws_iam_policy" "lambda_policy" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "S3ReadAccess"
-        Effect = "Allow"
-        Action = ["s3:GetObject"]
+        Sid      = "S3ReadAccess"
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
         Resource = "${aws_s3_bucket.claims_bucket.arn}/*"
       },
       {
@@ -56,9 +56,18 @@ resource "aws_iam_policy" "lambda_policy" {
         ]
       },
       {
-        Sid    = "DynamoDBWriteAccess"
+        Sid    = "MarketplaceAccess"
         Effect = "Allow"
-        Action = ["dynamodb:PutItem"]
+        Action = [
+          "aws-marketplace:ViewSubscriptions",
+          "aws-marketplace:Subscribe"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid      = "DynamoDBWriteAccess"
+        Effect   = "Allow"
+        Action   = ["dynamodb:PutItem"]
         Resource = aws_dynamodb_table.claims_table.arn
       },
       {
