@@ -144,19 +144,28 @@ detection to support fully handwritten claim submissions.
 
 ---
 
-## ADR-010: SLA Reminder Notifications — Phase 2
-**Date:** 09 April 2026
-**Decision:** Automated SLA reminder notifications deferred to Phase 2.
-**Reason:** Implementing scheduled reminders requires Amazon EventBridge 
-Scheduler, a dedicated reminder Lambda function, a claim resolution 
-status field in DynamoDB, and additional IAM permissions. This adds 
-significant scope beyond the core pipeline objective.
-**Phase 2 Implementation:**
+## ADR-010: SLA Reminder Notifications and Auto-Process Audit Reporting — Phase 2
+**Date:** 10 April 2026
+**Decision:** Automated SLA reminders and auto-process audit 
+reporting deferred to Phase 2.
+**Reason:** Both features require Amazon EventBridge Scheduler,
+additional Lambda functions and reporting infrastructure beyond
+the scope of the initial build.
+
+**Phase 2 — SLA Reminder:**
 - Add resolved_status field to DynamoDB schema
-- Create reminder Lambda function to check resolution status
-- Configure EventBridge Scheduler to trigger reminder Lambda 
-  at SLA deadline minus 5 business days
+- Create reminder Lambda to check resolution status
+- Configure EventBridge Scheduler to trigger at SLA deadline minus 5 days
 - If claim unresolved — fire SNS reminder to claims manager
 - If claim resolved — no action taken
+
+**Phase 2 — Auto-Process Daily Digest:**
+- EventBridge scheduled rule triggers daily at 08:00
+- Lambda queries DynamoDB for all auto_process records from previous day
+- Generates HTML audit report stored in S3
+- SNS email delivered to claims team with summary and link to full report
+- Report includes: claim ID, claimant name, amount, date, confidence score
+
 **Outcome:** SLA deadline date included in current email notification.
-Reminder capability documented for Phase 2 development.
+audit_flag field written to DynamoDB for all auto-processed claims
+pending Phase 2 batch review implementation.

@@ -216,3 +216,73 @@ day response deadline of 15 April 2026.
 - Bedrock identified the specific missing document accurately
 - No internal alert sent — correct as no fraud or risk flag
 - 5 business day SLA deadline correctly calculated
+
+---
+
+---
+
+## Test 4 — Auto-Process Routing (10 April 2026)
+
+**Document:** Minor fence repair claim — Marcus David Webb  
+**Claimant:** Marcus David Webb  
+**Amount:** $950.00  
+**PDF Type:** Image-based — routed through Textract OCR  
+**Result:** ✅ Pass — auto_process routing triggered correctly  
+
+---
+
+**Stage 1 — S3 Upload Trigger**
+
+Test 4 PDF uploaded to `claims-pipeline-nk` S3 bucket,
+automatically triggering the Lambda pipeline.
+
+---
+
+**Stage 2 — Textract OCR**
+
+Image-based PDF detected. 1,841 characters extracted via
+Textract OCR and passed to Bedrock for analysis.
+
+![CloudWatch logs showing auto-process routing](../architecture/test4-cloudwatch-logs.png)
+
+---
+
+**Stage 3 — Bedrock AI Analysis**
+
+Bedrock correctly assessed the claim as low risk — amount of
+$950 well below the $50,000 threshold, all documentation
+present, no prior claims detected, filed 2 days post-incident.
+
+---
+
+**Stage 4 — Schema Validation**
+
+All required fields present and validated successfully.
+
+---
+
+**Stage 5 — DynamoDB Storage**
+
+Claim record written with recommended_action set to auto_process.
+
+![DynamoDB claim record](../architecture/test4-dynamodb-record-1.png)
+
+![DynamoDB claim record continued](../architecture/test4-dynamodb-record-2.png)
+
+---
+
+**Stage 6 — No SNS Required**
+
+Claim auto-processed directly to DynamoDB. No SNS notification
+fired — correct behaviour for clean low-value claims.
+No email received — confirms routing matrix working correctly.
+
+---
+
+**Observations:**
+- auto_process routing triggered correctly for low value clean claim
+- No SNS alert fired — correct behaviour
+- Bedrock correctly assessed all documentation as present
+- No prior claims detected
+- Pipeline processed claim in under 10 seconds end to end
+- audit_flag written to DynamoDB for periodic batch review

@@ -30,3 +30,7 @@ No prompt changes in this version. Iterative edits were made
 to the Lambda Python code to handle permissions, JSON parsing, 
 float to Decimal conversion, and markdown stripping. The prompt 
 itself performed as designed.
+
+## Known Limitations
+- Auto-process audit reporting deferred to Phase 2 — see ADR-010
+- SLA reminder notifications deferred to Phase 2 — see ADR-010

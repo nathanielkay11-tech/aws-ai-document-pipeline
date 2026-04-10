@@ -75,6 +75,18 @@ supported in this version. The pipeline handles typed digital PDFs
 and scanned printed forms. Full handwriting detection is documented 
 as a Phase 2 enhancement (see ADR-009).
 
+- **Auto-process audit reporting** — auto-processed claims are 
+flagged in DynamoDB via audit_flag but no automated daily digest 
+report is generated in this version. A daily HTML audit report 
+with S3 link delivery is documented as a Phase 2 enhancement 
+(see ADR-010).
+
+- **SLA reminder notifications** — SLA deadline is calculated and 
+included in email alerts but no automated follow-up reminder is 
+sent if a claim remains unresolved. Automated reminders via 
+EventBridge Scheduler are documented as a Phase 2 enhancement 
+(see ADR-010).
+
 ## Development Approach
 
 This project was developed using an AI-assisted workflow. Claude 
