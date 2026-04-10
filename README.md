@@ -17,8 +17,18 @@
 - **The Goal:** To prove the architecture works in a real AWS environment — all four routing outcomes tested and documented with evidence in [`/docs/testing-log.md`](docs/testing-log.md).
 
 ### 📍 Iteration 3: One-Shot Prompt Engineering
-- **What it is:** A single, multi-constraint prompt capable of reproducing this entire repository from scratch in one AI-assisted pass.
+- **What it is:** A single, multi-constraint prompt capable of reproducing the complete Terraform infrastructure and Lambda function from scratch in one AI-assisted pass. See [`/prompts/iteration3-one-shot-prompt.md`](prompts/iteration3-one-shot-prompt.md).
 - **The Goal:** To demonstrate prompt engineering maturity — treating the AI as a junior engineer and validating every output as the architect.
+- **Status:** 🔵 Prompt engineered and architect review complete — full redeployment test planned
+
+**Key insight:** The one-shot prompt was only possible because of the iterative build process that preceded it. Every constraint in the prompt reflects a real problem encountered and solved during development — from the pypdf sys.path insert to the inference profile ARN to the markdown fence stripping. Without the build experience, the prompt could not have been written. This demonstrates that effective AI prompt engineering requires deep domain knowledge, not just clever wording.
+
+**Architect Review Findings (10 April 2026):**
+The generated output was validated against the working build. Two discrepancies were identified and corrected:
+1. Environment variable naming — `DYNAMODB_TABLE_NAME` vs `DYNAMODB_TABLE`
+2. `depends_on` reference difference — valid alternative but differs from tested fix
+
+Full redeployment test to follow as final validation step.
 
 ---
 
