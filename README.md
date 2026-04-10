@@ -69,6 +69,14 @@ graph LR
 
 ---
 
+## 🎬 Demo Video
+
+Watch the pipeline process a real insurance claim end to end — from PDF upload to AI analysis to email alert delivery.
+
+[▶ Watch on YouTube](https://youtu.be/znQ4N-OjPO8)
+
+---
+
 ## ✅ Testing Results
 
 All test cases documented with evidence in [docs/testing-log.md](docs/testing-log.md)
