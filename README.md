@@ -9,12 +9,12 @@
 ## 🗺️ Project Navigation: The 3 Iterations
 
 ### 📍 Iteration 1: Design and Prompt Engineering
-- **What it is:** The architecture design, business logic and prompt engineering phase. See the `/prompts/` folder for versioned system prompts and `/docs/design-decisions.md` for all architectural decision records.
+- **What it is:** The architecture design, business logic and prompt engineering phase. See the [`/prompts/`](prompts/) folder for versioned system prompts and [`/docs/design-decisions.md`](docs/design-decisions.md) for all architectural decision records.
 - **The Goal:** To design a production-quality AI pipeline from first principles — defining the routing matrix, SLA logic, dual notification strategy and prompt constraints before writing a single line of code.
 
 ### 📍 Iteration 2: Infrastructure Build and Testing
 - **What it is:** Full Terraform IaC deployment of all AWS services, Lambda function development and end-to-end testing across all four routing outcomes.
-- **The Goal:** To prove the architecture works in a real AWS environment — all four routing outcomes tested and documented with evidence in `/docs/testing-log.md`.
+- **The Goal:** To prove the architecture works in a real AWS environment — all four routing outcomes tested and documented with evidence in [`/docs/testing-log.md`](docs/testing-log.md).
 
 ### 📍 Iteration 3: One-Shot Prompt Engineering
 - **What it is:** A single, multi-constraint prompt capable of reproducing this entire repository from scratch in one AI-assisted pass.
@@ -91,24 +91,24 @@ All test cases documented with evidence in [docs/testing-log.md](docs/testing-lo
 - **Claimant authentication** — direct S3 upload assumes a secure
 upload mechanism exists. A full authentication layer using AWS Cognito
 and pre-signed S3 URLs is out of scope for this version and documented
-as a Phase 2 enhancement (see ADR-005).
+as a Phase 2 enhancement (see [ADR-005](docs/design-decisions.md)).
 
 - **Handwritten documents** — fully handwritten claim forms are not
 supported in this version. The pipeline handles typed digital PDFs
 and scanned printed forms. Full handwriting detection is documented
-as a Phase 2 enhancement (see ADR-009).
+as a Phase 2 enhancement (see [ADR-009](docs/design-decisions.md)).
 
 - **Auto-process audit reporting** — auto-processed claims are
 flagged in DynamoDB via audit_flag but no automated daily digest
 report is generated in this version. A daily HTML audit report
 with S3 link delivery is documented as a Phase 2 enhancement
-(see ADR-010).
+(see [ADR-010](docs/design-decisions.md)).
 
 - **SLA reminder notifications** — SLA deadline is calculated and
 included in email alerts but no automated follow-up reminder is
 sent if a claim remains unresolved. Automated reminders via
 EventBridge Scheduler are documented as a Phase 2 enhancement
-(see ADR-010).
+(see [ADR-010](docs/design-decisions.md)).
 
 ---
 
