@@ -144,3 +144,75 @@ of 20 April 2026 correctly calculated.
 - Confidence remained HIGH despite OCR extraction vs direct text extraction
 - Both PDF processing paths now validated end to end
 - DynamoDB table accumulating records correctly across multiple test runs
+
+---
+
+---
+
+## Test 3 — Pending Documentation Routing (10 April 2026)
+
+**Document:** Burst pipe property damage claim — Patricia Anne Collins  
+**Claimant:** Patricia Anne Collins  
+**Amount:** $7,550.00  
+**PDF Type:** Image-based — routed through Textract OCR  
+**Result:** ✅ Pass — pending_documentation routing triggered correctly  
+
+---
+
+**Stage 1 — S3 Upload Trigger**
+
+Test 3 PDF uploaded to `claims-pipeline-nk` S3 bucket,
+automatically triggering the Lambda pipeline.
+
+---
+
+**Stage 2 — Textract OCR**
+
+Image-based PDF detected. Document routed to Textract for OCR.
+Text extracted successfully and passed to Bedrock for analysis.
+
+![CloudWatch logs showing pipeline execution](../architecture/test3-cloudwatch-logs.png)
+
+---
+
+**Stage 3 — Bedrock AI Analysis**
+
+Bedrock correctly identified that the contractor repair estimate
+was missing from the submitted documentation. Supporting
+documentation present set to false.
+
+---
+
+**Stage 4 — Schema Validation**
+
+All required fields present and validated successfully.
+
+---
+
+**Stage 5 — DynamoDB Storage**
+
+Claim record written with recommended_action set to
+pending_documentation.
+
+![DynamoDB claim record](../architecture/test3-dynamodb-record-1.png)
+
+![DynamoDB claim record continued](../architecture/test3-dynamodb-record-2.png)
+
+---
+
+**Stage 6 — SNS Claimant Notification Delivered**
+
+Correctly routed to SNS-Claimant — not SNS-Internal. Claimant
+notified directly with specific action required and 5 business
+day response deadline of 15 April 2026.
+
+![SNS claimant email notification](../architecture/test3-email-alert.png)
+
+---
+
+**Observations:**
+- pending_documentation routing triggered correctly
+- SNS-Claimant fired instead of SNS-Internal — correct behaviour
+- Bedrock identified the specific missing document accurately
+- No internal alert sent — correct as no fraud or risk flag
+- 5 business day SLA deadline correctly calculated
