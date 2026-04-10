@@ -89,7 +89,14 @@ approval authority.
 
 ---
 
-**Stage 2 — Textract OCR**
+**Stage 1 — S3 Upload Trigger**
+
+Image-based claim PDF uploaded to `claims-pipeline-nk` S3 bucket,
+automatically triggering the Lambda pipeline.
+
+---
+
+**Stage 2 — PDF Type Detection and Textract OCR**
 
 Image-based PDF detected automatically. Document routed to 
 Amazon Textract for OCR processing. Text extracted successfully
@@ -99,12 +106,27 @@ and passed to Bedrock for analysis.
 
 ---
 
+**Stage 3 — Bedrock AI Analysis**
+
+Claude Sonnet 4.5 analyzed the OCR extracted text and returned 
+a high confidence structured JSON output. Risk flag triggered 
+correctly — amount of $60,520 exceeds the $50,000 threshold.
+
+---
+
+**Stage 4 — Schema Validation**
+
+All required fields present and validated before DynamoDB write.
+
+---
+
 **Stage 5 — DynamoDB Storage**
 
-Claim record written successfully with all fields extracted
-via Textract OCR.
+Claim record written successfully. Table now shows 4 records 
+from all test runs — demonstrating pipeline processing multiple 
+claims over time.
 
-![DynamoDB claim record](../architecture/test2-dynamodb-record.png)
+![DynamoDB table showing multiple processed claims](../architecture/test2-dynamodb-records.png)
 
 ---
 
@@ -113,4 +135,12 @@ via Textract OCR.
 Claim routed to human review at HIGH priority. SLA deadline
 of 20 April 2026 correctly calculated.
 
-![SNS email alert](../architecture/test
+![SNS email alert received by claims manager](../architecture/test2-email-alert.png)
+
+---
+
+**Observations:**
+- Textract OCR successfully extracted all key fields from image-based PDF
+- Confidence remained HIGH despite OCR extraction vs direct text extraction
+- Both PDF processing paths now validated end to end
+- DynamoDB table accumulating records correctly across multiple test runs
