@@ -38,7 +38,7 @@ graph LR
 
 ## Project Status
 
-🟢 Pipeline deployed and tested — first claim successfully processed
+🟡 Testing complete — Iteration 3 (one-shot prompt) in progress
 
 ## Testing Results
 
