@@ -48,8 +48,8 @@ All test cases documented with evidence in [docs/testing-log.md](docs/testing-lo
 |---|---|---|---|---|---|
 | Test 1 | Text-based PDF | pypdf — Textract bypassed | ✅ Triggered — amount $60,520 exceeds $50,000 threshold | Human review — HIGH priority | ✅ Pass |
 | Test 2 | Image-based PDF | Textract OCR | ✅ Triggered — amount $60,520 exceeds $50,000 threshold | Human review — HIGH priority | ✅ Pass |
-| Test 3 | Incomplete documentation | TBD | TBD | Pending documentation | 🔵 Planned |
-| Test 4 | Low value clean claim | TBD | TBD | Auto-process | 🔵 Planned |
+| Test 3 | Image-based PDF — missing docs | Textract OCR | ❌ Not triggered | Pending documentation | ✅ Pass |
+| Test 4 | Image-based PDF — clean low value | Textract OCR | ❌ Not triggered | Auto-process | ✅ Pass |
 
 ## Services Used
 
