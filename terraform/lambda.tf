@@ -1,3 +1,16 @@
+# --- SQS Dead Letter Queue ---
+
+resource "aws_sqs_queue" "lambda_dlq" {
+  name                      = "claims-pipeline-dlq"
+  message_retention_seconds = 1209600
+
+  tags = {
+    Name        = "claims-pipeline-dlq"
+    Environment = var.environment
+    Project     = "ai-claims-pipeline"
+  }
+}
+
 # --- Lambda Function: Claims Pipeline Processor ---
 
 resource "aws_lambda_function" "claims_processor" {
@@ -8,6 +21,10 @@ resource "aws_lambda_function" "claims_processor" {
   runtime          = "python3.12"
   timeout          = 300
   source_code_hash = filebase64sha256("../src/lambda_function.zip")
+
+  dead_letter_config {
+    target_arn = aws_sqs_queue.lambda_dlq.arn
+  }
 
   environment {
     variables = {

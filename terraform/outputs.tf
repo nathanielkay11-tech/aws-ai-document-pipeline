@@ -29,3 +29,8 @@ output "bedrock_model_id" {
   description = "The Bedrock model ID being used"
   value       = var.bedrock_model_id
 }
+
+output "dlq_url" {
+  description = "The URL of the Lambda Dead Letter Queue"
+  value       = aws_sqs_queue.lambda_dlq.url
+}

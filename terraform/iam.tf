@@ -56,15 +56,6 @@ resource "aws_iam_policy" "lambda_policy" {
         ]
       },
       {
-        Sid    = "MarketplaceAccess"
-        Effect = "Allow"
-        Action = [
-          "aws-marketplace:ViewSubscriptions",
-          "aws-marketplace:Subscribe"
-        ]
-        Resource = "*"
-      },
-      {
         Sid      = "DynamoDBWriteAccess"
         Effect   = "Allow"
         Action   = ["dynamodb:PutItem"]
@@ -78,6 +69,12 @@ resource "aws_iam_policy" "lambda_policy" {
           aws_sns_topic.claims_internal.arn,
           aws_sns_topic.claims_claimant.arn
         ]
+      },
+      {
+        Sid      = "SQSDeadLetterQueue"
+        Effect   = "Allow"
+        Action   = ["sqs:SendMessage"]
+        Resource = aws_sqs_queue.lambda_dlq.arn
       },
       {
         Sid    = "CloudWatchLogsAccess"
