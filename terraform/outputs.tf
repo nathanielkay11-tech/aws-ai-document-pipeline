@@ -34,3 +34,8 @@ output "dlq_url" {
   description = "The URL of the Lambda Dead Letter Queue"
   value       = aws_sqs_queue.lambda_dlq.url
 }
+
+output "dlq_processor_function_name" {
+  description = "The name of the DLQ processor Lambda function"
+  value       = aws_lambda_function.dlq_processor.function_name
+}

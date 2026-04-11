@@ -60,20 +60,17 @@ graph LR
     H --> J[Claims Manager]
     I --> K[Claimant]
     G --> L[Audit Review]
+    B -->|Processing Error| M[SQS Dead Letter Queue]
+    M --> N[DLQ Processor Lambda]
+    N --> H
+    N --> I
 ```
 
 ---
 
 ## 🚀 Project Status
+
 🟡 Build and testing complete — Iteration 3 in progress
-
----
-
-## 🎬 Demo Video
-
-Watch the pipeline process a real insurance claim end to end — from PDF upload to AI analysis to email alert delivery.
-
-[▶ Watch on YouTube](https://youtu.be/znQ4N-OjPO8)
 
 ---
 
@@ -101,6 +98,8 @@ All test cases documented with evidence in [docs/testing-log.md](docs/testing-lo
 | Amazon DynamoDB | Stores all claim results as structured JSON — auto-processed claims with medium confidence are flagged for periodic batch review without triggering an alert |
 | Amazon SNS | Dual notification layer — SNS-Internal alerts the claims team for human review, fraud flags, processing errors and missed SLAs. SNS-Claimant notifies the claimant directly when documentation is missing or resubmission is required |
 | pypdf | Extracts text directly from text-based PDFs — bypasses Textract for digitally created documents, reducing cost and latency |
+| Amazon SQS | Dead Letter Queue — captures failed Lambda events after all retry attempts are exhausted, preventing infinite retry loops and ensuring no claim is silently lost |
+| DLQ Processor Lambda | Dedicated Lambda function triggered by the SQS Dead Letter Queue — fires a single dual SNS notification to both the internal claims team and the claimant only after all retry attempts have failed |
 
 ---
 

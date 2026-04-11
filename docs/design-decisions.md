@@ -169,3 +169,26 @@ the scope of the initial build.
 **Outcome:** SLA deadline date included in current email notification.
 audit_flag field written to DynamoDB for all auto-processed claims
 pending Phase 2 batch review implementation.
+
+---
+
+## ADR-011: SQS Dead Letter Queue and DLQ Processor Lambda
+**Date:** 11 April 2026
+**Decision:** Implemented SQS Dead Letter Queue with a dedicated 
+DLQ Processor Lambda to handle processing error notifications.
+**Reason:** Initial implementation fired SNS notifications inside 
+the main Lambda handler on every retry attempt, causing duplicate 
+emails to both the internal claims team and the claimant. A Dead 
+Letter Queue was added to capture failed events after all retry 
+attempts are exhausted. A dedicated DLQ Processor Lambda was then 
+built to fire a single dual SNS notification only after all retries 
+have failed — ensuring no duplicate notifications and no silently 
+lost claims.
+**Architecture:**
+- SQS DLQ captures failed S3 events after Lambda retry exhaustion
+- DLQ Processor Lambda triggered by SQS event source mapping
+- Dual SNS notification fires once — internal team and claimant
+- Internal alert includes S3 document location for manual retrieval
+- Claimant alert requests resubmission with contact details
+**Outcome:** Processing error notifications are now fired exactly 
+once per failed document regardless of retry behaviour.

@@ -38,6 +38,8 @@ The pipeline must use the following AWS services in sequence:
 - Amazon DynamoDB — on-demand billing, stores structured JSON claim results
 - Amazon SNS — two separate topics: SNS-Internal for claims team, SNS-Claimant for claimant notifications
 - pypdf — direct text extraction for text-based PDFs, bypassing Textract
+- Amazon SQS — Dead Letter Queue to capture failed Lambda events after all retry attempts are exhausted
+- DLQ Processor Lambda — dedicated Lambda function triggered by SQS DLQ, fires single dual SNS notification after all retries exhausted
 
 **Terraform Structure:**
 Produce separate files for each resource — do not combine into a single main.tf:
@@ -49,6 +51,7 @@ Produce separate files for each resource — do not combine into a single main.t
 - lambda.tf — function definition referencing ../src/lambda_function.zip, all environment variables passed from variables.tf, depends_on lambda permission to prevent loss on redeploy
 - sns.tf — two topics with tags, two email subscriptions with placeholder endpoints
 - outputs.tf — s3 bucket name, dynamodb table name, lambda function name, both SNS ARNs, bedrock model ID
+- lambda.tf — claims processor Lambda, DLQ processor Lambda, SQS Dead Letter Queue with 60 second visibility timeout, S3 event source mapping, SQS event source mapping for DLQ processor
 
 **Lambda Function Requirements:**
 Produce a single lambda_function.py with these exact capabilities:
@@ -117,6 +120,7 @@ The system prompt passed to Bedrock must instruct the model to:
 - Fully handwritten documents not supported
 - Prior claims detection relies on document content only — no database lookup
 - SLA reminder notifications and auto-process audit reporting deferred to Phase 2
+- DLQ processor Lambda requires separate zip package — dlq_processor.zip built from src/dlq_processor.py
 
 ## How to Validate the Output
 As the architect reviewing the junior engineer's output, verify:

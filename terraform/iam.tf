@@ -96,3 +96,76 @@ resource "aws_iam_role_policy_attachment" "lambda_policy_attachment" {
   role       = aws_iam_role.lambda_execution_role.name
   policy_arn = aws_iam_policy.lambda_policy.arn
 }
+
+# --- IAM Role: DLQ Processor Lambda ---
+
+resource "aws_iam_role" "dlq_processor_role" {
+  name = "claims-pipeline-dlq-processor-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+
+  tags = {
+    Environment = var.environment
+    Project     = "ai-claims-pipeline"
+  }
+}
+
+# --- IAM Policy: DLQ Processor Least Privilege ---
+
+resource "aws_iam_policy" "dlq_processor_policy" {
+  name        = "claims-pipeline-dlq-processor-policy"
+  description = "Least privilege policy for DLQ processor Lambda"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "SNSPublishAccess"
+        Effect = "Allow"
+        Action = ["sns:Publish"]
+        Resource = [
+          aws_sns_topic.claims_internal.arn,
+          aws_sns_topic.claims_claimant.arn
+        ]
+      },
+      {
+        Sid    = "SQSReceiveAccess"
+        Effect = "Allow"
+        Action = [
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes"
+        ]
+        Resource = aws_sqs_queue.lambda_dlq.arn
+      },
+      {
+        Sid    = "CloudWatchLogsAccess"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "arn:aws:logs:*:*:*"
+      }
+    ]
+  })
+}
+
+# --- Attach Policy to DLQ Processor Role ---
+
+resource "aws_iam_role_policy_attachment" "dlq_processor_policy_attachment" {
+  role       = aws_iam_role.dlq_processor_role.name
+  policy_arn = aws_iam_policy.dlq_processor_policy.arn
+}

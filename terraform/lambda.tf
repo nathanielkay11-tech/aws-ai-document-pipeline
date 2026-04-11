@@ -1,8 +1,9 @@
 # --- SQS Dead Letter Queue ---
 
 resource "aws_sqs_queue" "lambda_dlq" {
-  name                      = "claims-pipeline-dlq"
-  message_retention_seconds = 1209600
+  name                       = "claims-pipeline-dlq"
+  message_retention_seconds  = 1209600
+  visibility_timeout_seconds = 60
 
   tags = {
     Name        = "claims-pipeline-dlq"
@@ -54,4 +55,38 @@ resource "aws_lambda_permission" "s3_invoke_lambda" {
   source_arn    = aws_s3_bucket.claims_bucket.arn
 
   depends_on = [aws_lambda_function.claims_processor]
+}
+
+# --- DLQ Processor Lambda Function ---
+
+resource "aws_lambda_function" "dlq_processor" {
+  filename         = "../src/dlq_processor.zip"
+  function_name    = "claims-pipeline-dlq-processor"
+  role             = aws_iam_role.dlq_processor_role.arn
+  handler          = "dlq_processor.lambda_handler"
+  runtime          = "python3.12"
+  timeout          = 60
+  source_code_hash = filebase64sha256("../src/dlq_processor.zip")
+
+  environment {
+    variables = {
+      SNS_INTERNAL_ARN = aws_sns_topic.claims_internal.arn
+      SNS_CLAIMANT_ARN = aws_sns_topic.claims_claimant.arn
+      S3_BUCKET_NAME   = aws_s3_bucket.claims_bucket.id
+    }
+  }
+
+  tags = {
+    Name        = "claims-pipeline-dlq-processor"
+    Environment = var.environment
+    Project     = "ai-claims-pipeline"
+  }
+}
+
+# --- SQS Event Source Mapping ---
+
+resource "aws_lambda_event_source_mapping" "dlq_trigger" {
+  event_source_arn = aws_sqs_queue.lambda_dlq.arn
+  function_name    = aws_lambda_function.dlq_processor.arn
+  batch_size       = 1
 }
