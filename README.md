@@ -70,7 +70,15 @@ graph LR
 
 ## 🚀 Project Status
 
-🟡 Build and testing complete — Iteration 3 in progress
+🟢 Build, testing and demo complete — Iteration 3 redeployment test pending
+
+---
+
+## 🎬 Demo Video
+
+Watch the pipeline process four real claim documents live — from upload to AI analysis, routing decisions, email notifications and DynamoDB storage across all four routing outcomes.
+
+[▶ Watch on YouTube](https://youtu.be/TYg1RSfvLNQ)
 
 ---
 
