@@ -1,13 +1,11 @@
 # =============================================================
 # CHANGELOG
-# v1.6 - 09 April 2026
-# CHANGE: Improved SNS email formatting and subject lines
-# REASON: Plain text output was unprofessional for a claims
-# manager receiving actionable alerts. Updated to include:
-# - Priority-based subject lines e.g. [CRITICAL PRIORITY]
-# - Structured email body with clear sections
-# - Exact SLA deadline date calculated from processed timestamp
-# - Phase 2 note for automated SLA reminders via EventBridge
+# v1.7 - 11 April 2026
+# CHANGE: Removed SNS notification from main Lambda error handler
+# REASON: DLQ processor Lambda now handles all processing error
+# notifications after retry exhaustion. Main Lambda logs error
+# and raises exception only — no duplicate SNS notifications.
+# handle_processing_error function removed entirely.
 # =============================================================
 
 import sys
@@ -46,7 +44,6 @@ def lambda_handler(event, context):
         
         print(f"Processing file: {object_key} from bucket: {bucket_name}")
         
-        # Download PDF from S3 into memory
         s3_response = s3_client.get_object(Bucket=bucket_name, Key=object_key)
         pdf_bytes = s3_response['Body'].read()
         
@@ -102,7 +99,6 @@ def lambda_handler(event, context):
         
     except Exception as e:
         print(f"Pipeline error: {str(e)}")
-        handle_processing_error(object_key if 'object_key' in locals() else 'unknown')
         raise
 
 
@@ -193,6 +189,12 @@ def invoke_bedrock(raw_text, attempt=1):
         "audit_note": "string",
         "sla_deadline": "string"
     }
+
+    ROUTING RULES — follow these exactly:
+    - If total_amount_claimed >= 50000 OR prior_claims_detected is true: set recommended_action to human_review
+    - If supporting_documentation_present is false OR any required document is missing: set recommended_action to pending_documentation
+    - If confidence is high AND risk_flag is false AND supporting_documentation_present is true AND total_amount_claimed < 50000: set recommended_action to auto_process
+    - pending_documentation takes priority over human_review when the only issue is missing documentation and no risk flag is triggered
     
     Constraint: Return ONLY valid JSON. No explanation, no preamble, no markdown code fences. Use null for missing fields."""
     
@@ -238,6 +240,7 @@ def invoke_bedrock(raw_text, attempt=1):
 
 def validate_schema(result):
     """Validate that required fields are present in Bedrock response."""
+    
     required_fields = [
         'claimant_name', 'policy_number', 'incident_date',
         'total_amount_claimed', 'risk_flag', 'confidence',
@@ -378,60 +381,4 @@ For assistance please contact claims@northgateinsurance.com
         print(f"Claim {claim_id} auto-processed — no SNS required")
 
     elif recommended_action == 'processing_error':
-        handle_processing_error(claim_id)
-
-
-def handle_processing_error(reference):
-    """Handle pipeline failures with dual SNS notification."""
-    sns_client.publish(
-        TopicArn=SNS_INTERNAL_ARN,
-        Subject=f"[PIPELINE ERROR] Processing Failed - {reference}",
-        Message=f"""
-PIPELINE ERROR — MANUAL INTERVENTION REQUIRED
-{'=' * 60}
-
-The claims pipeline failed to process the following document:
-
-Reference: {reference}
-
-Please investigate the CloudWatch logs for this Lambda
-function and reprocess the document manually if required.
-
-{'=' * 60}
-This is an automated error notification from the Northgate
-Insurance AI Claims Processing Pipeline.
-        """
-    )
-    
-    sns_client.publish(
-        TopicArn=SNS_CLAIMANT_ARN,
-        Subject=f"Claim Submission Issue — Action Required",
-        Message=f"""
-CLAIM SUBMISSION ISSUE
-{'=' * 60}
-
-Dear Claimant,
-
-We were unable to process your recent claim document
-submission. This may be due to document quality or format.
-
-Reference: {reference}
-
-{'=' * 60}
-ACTION REQUIRED
-Please resubmit a clearer copy of your document.
-
-Accepted formats: PDF (typed or scanned)
-Maximum file size: 10MB
-
-If the issue persists please contact our claims team:
-claims@northgateinsurance.com
-Tel: 1-800-555-0192
-
-{'=' * 60}
-This is an automated notification from the Northgate
-Insurance Claims Processing System.
-        """
-    )
-    
-    print(f"Processing error SNS alerts sent for {reference}")
+        print(f"Claim {claim_id} marked as processing_error — DLQ processor will handle notification")
