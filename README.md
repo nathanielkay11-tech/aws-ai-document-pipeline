@@ -86,28 +86,12 @@ Watch the pipeline process four real claim documents live — from upload to AI 
 
 All test cases documented with evidence in [docs/testing-log.md](docs/testing-log.md)
 
-| Test | Document Type | Extraction Method | Risk Flag | Recommended Action | Result |
-|---|---|---|---|---|---|
-| Test 1 | Text-based PDF | pypdf — Textract bypassed | ✅ Triggered — amount $60,520 exceeds $50,000 threshold | Human review — HIGH priority | ✅ Pass |
-| Test 2 | Image-based PDF — missing contractor estimate | Textract OCR | ❌ Not triggered | Pending documentation | ✅ Pass |
-| Test 3 | Image-based PDF — clean low value | Textract OCR | ❌ Not triggered | Auto-process | ✅ Pass |
-| Test 4 | Invalid document — incompatible file format | N/A — pipeline failure | N/A | Processing error — dual SNS via DLQ processor | ✅ Pass |
----
-
-## 🛠️ Services Used
-
-| Service | Role |
-|---|---|
-| Amazon S3 | The inbox — where claims are uploaded and the pipeline starts |
-| AWS Lambda | The coordinator — connects all services and runs only when needed |
-| Amazon Textract | Converts the PDF into readable text the computer can analyze |
-| Amazon Bedrock | Managed AI that analyzes the text and returns structured output based on the prompt |
-| Amazon DynamoDB | Stores all claim results as structured JSON — auto-processed claims with medium confidence are flagged for periodic batch review without triggering an alert |
-| Amazon SNS | Dual notification layer — SNS-Internal alerts the claims team for human review, fraud flags, processing errors and missed SLAs. SNS-Claimant notifies the claimant directly when documentation is missing or resubmission is required |
-| pypdf | Extracts text directly from text-based PDFs — bypasses Textract for digitally created documents, reducing cost and latency |
-| Amazon SQS | Dead Letter Queue — captures failed Lambda events after all retry attempts are exhausted, preventing infinite retry loops and ensuring no claim is silently lost |
-| DLQ Processor Lambda | Dedicated Lambda function triggered by the SQS Dead Letter Queue — fires a single dual SNS notification to both the internal claims team and the claimant only after all retry attempts have failed |
-
+| Test | Document | PDF Type | Extraction Method | Risk Flag | Recommended Action | Result |
+|---|---|---|---|---|---|---|
+| Test 1 | James Harrington — $60,520 property damage | Text-based | pypdf — Textract bypassed | ✅ Triggered — amount exceeds $50,000 threshold, prior claim detected | Human review — HIGH priority | ✅ Pass |
+| Test 2 | Patricia Collins — $7,550 burst pipe | Image-based | Textract OCR | ❌ Not triggered | Pending documentation — missing contractor estimate | ✅ Pass |
+| Test 3 | Marcus Webb — $950 fence repair | Image-based | Textract OCR | ❌ Not triggered | Auto-process — clean low value claim | ✅ Pass |
+| Test 4 | Invalid file — fake PDF | N/A | N/A — pipeline failure | N/A | Processing error — dual SNS via DLQ processor | ✅ Pass |
 ---
 
 ## ⚠️ Known Limitations
