@@ -19,7 +19,7 @@
 ### 📍 Iteration 3: One-Shot Prompt Engineering
 - **What it is:** A single, multi-constraint prompt capable of reproducing the complete Terraform infrastructure and Lambda function from scratch in one AI-assisted pass. See [`/prompts/iteration3-one-shot-prompt.md`](prompts/iteration3-one-shot-prompt.md).
 - **The Goal:** To demonstrate prompt engineering maturity — treating the AI as a junior engineer and validating every output as the architect.
-- **Status:** 🔵 Prompt engineered and architect review complete — full redeployment test planned
+- **Status:** ✅ Prompt engineered, architect review complete and full redeployment validated — all four routing outcomes confirmed on reproduced pipeline
 
 **Key insight:** The one-shot prompt was only possible because of the iterative build process that preceded it. Every constraint in the prompt reflects a real problem encountered and solved during development — from the pypdf sys.path insert to the inference profile ARN to the markdown fence stripping. Without the build experience, the prompt could not have been written. This demonstrates that effective AI prompt engineering requires deep domain knowledge, not just clever wording.
 
@@ -70,7 +70,7 @@ graph LR
 
 ## 🚀 Project Status
 
-🟢 Build, testing and demo complete — Iteration 3 redeployment test pending
+🟢 Build, testing, demo and Iteration 3 redeployment complete
 
 ---
 
