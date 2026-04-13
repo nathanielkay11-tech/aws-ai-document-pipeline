@@ -20,6 +20,8 @@ Before running this prompt output, ensure the following are in place:
 - Python 3 and pip installed locally for Lambda packaging
 - pypdf packaged into src/package/ before terraform apply
   (use the generated build_lambda.sh script)
+- S3 bucket name must be globally unique — add a personal suffix to the 
+  default bucket name e.g. `insurance-claims-uploads-nk`
 
 ## The Prompt
 
@@ -47,7 +49,7 @@ Produce separate files for each resource — do not combine into a single main.t
 - variables.tf — all configurable values including region, model ID, bucket name, table name, SNS topic names, risk threshold, environment tag, Lambda function name, Lambda timeout defaulting to 300 seconds, Lambda memory defaulting to 512 MB, DLQ processor function name, DLQ processor timeout defaulting to 30 seconds, DLQ processor memory defaulting to 128 MB
 - s3.tf — private bucket, public access block, AES256 encryption, PDF event notification trigger
 - dynamodb.tf — on-demand billing, claim_id as String partition key, server-side encryption
-- iam.tf — two separate IAM roles and least-privilege policies: (1) claims processor Lambda role with s3:GetObject, textract:DetectDocumentText, textract:AnalyzeDocument, bedrock:InvokeModel for both foundation-model and inference-profile ARNs, dynamodb:PutItem, sns:Publish for both SNS topic ARNs, sqs:SendMessage for DLQ ARN, logs permissions. (2) DLQ processor Lambda role with sns:Publish for both SNS topic ARNs, sqs:ReceiveMessage, sqs:DeleteMessage, sqs:GetQueueAttributes for DLQ ARN, logs permissions. No AWS managed policies. No wildcards on actions.
+- iam.tf — two separate IAM roles and least-privilege policies: (1) claims processor Lambda role with s3:GetObject, textract:DetectDocumentText, textract:AnalyzeDocument, bedrock:InvokeModel using wildcard region format `arn:aws:bedrock:*::foundation-model/*` and `arn:aws:bedrock:*:*:inference-profile/*` — this is required because the us. cross-region inference profile routes through multiple AWS regions, dynamodb:PutItem, sns:Publish for both SNS topic ARNs, sqs:SendMessage for DLQ ARN, logs permissions. (2) DLQ processor Lambda role with sns:Publish for both SNS topic ARNs, sqs:ReceiveMessage, sqs:DeleteMessage, sqs:GetQueueAttributes for DLQ ARN, logs permissions. No AWS managed policies. No wildcards on actions except Bedrock resource ARNs.
 - lambda.tf — claims processor Lambda with filename referencing `${path.module}/../src/lambda_function.zip`, DLQ processor Lambda with filename referencing `${path.module}/../src/dlq_processor.zip`, dead_letter_config pointing to SQS DLQ, DLQ processor Lambda triggered by SQS event source mapping with batch size 1, SQS Dead Letter Queue with 60 second visibility timeout and 14 day message retention, S3 invoke permission with depends_on Lambda function, SQS event source mapping
 - sns.tf — two topics with tags, two email subscriptions with placeholder endpoints
 - outputs.tf — s3 bucket name, dynamodb table name, lambda function name, both SNS ARNs, bedrock model ID, DLQ URL, DLQ processor function name
@@ -66,6 +68,7 @@ Produce two separate Lambda functions:
 
 2. Bedrock inference:
    - Model: us.anthropic.claude-sonnet-4-5-20250929-v1:0
+   - Bedrock client must explicitly set region_name to us-east-1
    - Strip markdown code fences from response before JSON parsing
    - Retry once on JSON parse failure
    - Raise ValueError after 2 failed attempts
@@ -141,6 +144,7 @@ The system prompt passed to Bedrock must instruct the model to:
 - Fully handwritten documents not supported
 - Prior claims detection relies on document content only — no database lookup
 - SLA reminder notifications and auto-process audit reporting deferred to Phase 2
+- DLQ processor Lambda requires separate zip package — dlq_processor.zip built from src/dlq_processor.py
 
 ## How to Validate the Output
 As the architect reviewing the junior engineer's output, verify:
@@ -158,32 +162,56 @@ As the architect reviewing the junior engineer's output, verify:
 12. DLQ processor fires exactly two SNS notifications — one internal, one claimant
 13. SQS visibility timeout is 60 seconds — matching Lambda timeout
 14. .gitignore is present in terraform/ folder
+15. Bedrock client explicitly sets region_name to us-east-1
+16. Bedrock IAM resource uses wildcard region — not hardcoded us-east-1
+17. Lambda zip paths reference `${path.module}/../src/` not `${path.module}/src/`
+18. Lambda timeout defaults to 300 seconds in variables.tf
+19. S3 bucket name uses a unique suffix — not a generic name
 
-## Architect Review Findings (10 April 2026)
+## Architect Review Findings (13 April 2026)
 
-**Verdict: ✅ Prompt successful — output is production quality**
+**Verdict: ✅ Prompt successful — full redeployment validated**
 
 **What the AI produced correctly:**
 - All 9 Terraform files correctly separated
-- IAM least-privilege policy with exact permissions specified
+- Two separate IAM roles — claims processor and DLQ processor
 - Dual PDF processing with pypdf/Textract routing
-- SLA deadline calculation skipping weekends — more sophisticated than manual build
-- Regex-based markdown fence stripping — more robust than manual build
+- SLA deadline calculation skipping weekends
+- Regex-based markdown fence stripping
 - Float to Decimal conversion with InvalidOperation handling
 - Known limitations documented in code comments
-- Bonus build_lambda.sh script automating pypdf packaging
+- build_lambda.sh script automating both Lambda zip builds
+- DLQ processor Lambda with correct SQS event source mapping
+- Batch size 1 enforced on DLQ trigger
 
-**What required architect correction:**
-- Environment variable naming — DYNAMODB_TABLE_NAME vs DYNAMODB_TABLE
-  — corrected in prompt constraints above
-- depends_on references aws_iam_role_policy_attachment rather than
-  aws_lambda_permission — valid alternative but differs from tested fix
-- DLQ and DLQ processor not included in original generation —
-  prompt updated to include full SQS architecture
+**Corrections required before deployment:**
+
+1. **Zip file paths** — generated files referenced `${path.module}/src/` but 
+   correct path is `${path.module}/../src/` due to project folder structure
+   where src/ sits one level above terraform/
+
+2. **Lambda timeout** — generated default was 60 seconds, correct value is 
+   300 seconds to match SQS visibility timeout requirement and Bedrock 
+   inference latency
+
+3. **Bedrock IAM ARN** — generated ARN used specific region `us-east-1` but 
+   cross-region inference profile `us.anthropic.claude-sonnet-4-5` routes 
+   through multiple AWS regions. Correct resource ARN uses wildcard region:
+   `arn:aws:bedrock:*::foundation-model/*` and 
+   `arn:aws:bedrock:*:*:inference-profile/*`
+
+4. **S3 bucket name uniqueness** — default bucket name `insurance-claims-uploads` 
+   was already taken globally. Must use a unique suffix e.g. 
+   `insurance-claims-uploads-nk`
+
+**Redeployment test result (13 April 2026):**
+All four routing outcomes validated on reproduced pipeline:
+- ✅ human_review HIGH priority — text-based PDF via pypdf
+- ✅ pending_documentation — image-based PDF via Textract
+- ✅ auto_process — image-based PDF via Textract, no SNS
+- ✅ processing_error — dual notification via DLQ processor
 
 **Conclusion:**
-The one-shot prompt successfully reproduced the core infrastructure
-and Lambda function. Three discrepancies identified and corrected through
-architect review — consistent with treating the AI as a junior engineer
-whose output requires validation. Full redeployment test planned as
-final validation step.
+Four corrections required — all documented above and reflected in the 
+prompt constraints above. The prompt successfully reproduces a working 
+production-grade pipeline with architect review.
