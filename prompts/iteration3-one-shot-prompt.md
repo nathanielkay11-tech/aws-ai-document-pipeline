@@ -2,7 +2,7 @@
 
 ## Purpose
 This prompt was engineered after a full build and test cycle to reproduce 
-the complete Terraform infrastructure and Lambda function for the AWS AI 
+the complete Terraform infrastructure and Lambda functions for the AWS AI 
 Document Intelligence Pipeline in a single AI-assisted pass. Every constraint 
 reflects a real problem encountered and solved during development — from the 
 pypdf sys.path insert to the inference profile ARN to the markdown fence 
@@ -12,7 +12,7 @@ stripping. Without the build experience, this prompt could not have been written
 Before running this prompt output, ensure the following are in place:
 - AWS account with Terraform IAM user configured
 - Terraform IAM user requires custom least-privilege policies for: 
-  S3, DynamoDB, Lambda, SNS, Textract, IAM and Bedrock
+  S3, DynamoDB, Lambda, SNS, Textract, IAM, SQS and Bedrock
 - Amazon Bedrock model access enabled for Claude Sonnet 4.5 
   (`us.anthropic.claude-sonnet-4-5-20250929-v1:0`) in us-east-1
 - AWS CLI configured with Terraform user credentials
@@ -25,7 +25,7 @@ Before running this prompt output, ensure the following are in place:
 
 Act as a Senior AWS Solutions Architect and DevOps Engineer. 
 Generate the complete Terraform configuration files and complete 
-Lambda Python function for a serverless AI insurance claims 
+Lambda Python functions for a serverless AI insurance claims 
 processing pipeline. Provide the output as separate clearly 
 labelled code blocks for each file. Follow these strict constraints:
 
@@ -37,24 +37,26 @@ The pipeline must use the following AWS services in sequence:
 - Amazon Bedrock — Claude Sonnet 4.5 via inference profile for AI analysis
 - Amazon DynamoDB — on-demand billing, stores structured JSON claim results
 - Amazon SNS — two separate topics: SNS-Internal for claims team, SNS-Claimant for claimant notifications
-- pypdf — direct text extraction for text-based PDFs, bypassing Textract
 - Amazon SQS — Dead Letter Queue to capture failed Lambda events after all retry attempts are exhausted
+- pypdf — direct text extraction for text-based PDFs, bypassing Textract
 - DLQ Processor Lambda — dedicated Lambda function triggered by SQS DLQ, fires single dual SNS notification after all retries exhausted
 
 **Terraform Structure:**
 Produce separate files for each resource — do not combine into a single main.tf:
 - main.tf — AWS provider and Terraform version configuration only
-- variables.tf — all configurable values including region, model ID, bucket name, table name, SNS topic names, risk threshold and environment tag
+- variables.tf — all configurable values including region, model ID, bucket name, table name, SNS topic names, risk threshold, environment tag, Lambda function names, timeout and memory
 - s3.tf — private bucket, public access block, AES256 encryption, PDF event notification trigger
 - dynamodb.tf — on-demand billing, claim_id as String partition key, server-side encryption
-- iam.tf — Lambda execution role with exactly these permissions: s3:GetObject, textract:DetectDocumentText, textract:AnalyzeDocument, bedrock:InvokeModel for both foundation-model and inference-profile ARNs, dynamodb:PutItem, sns:Publish for both SNS topic ARNs, logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents. No AWS managed policies. No wildcards on actions.
-- lambda.tf — function definition referencing ../src/lambda_function.zip, all environment variables passed from variables.tf, depends_on lambda permission to prevent loss on redeploy
+- iam.tf — two separate IAM roles and least-privilege policies: (1) claims processor Lambda role with s3:GetObject, textract:DetectDocumentText, textract:AnalyzeDocument, bedrock:InvokeModel for both foundation-model and inference-profile ARNs, dynamodb:PutItem, sns:Publish for both SNS topic ARNs, sqs:SendMessage for DLQ ARN, logs permissions. (2) DLQ processor Lambda role with sns:Publish for both SNS topic ARNs, sqs:ReceiveMessage, sqs:DeleteMessage, sqs:GetQueueAttributes for DLQ ARN, logs permissions. No AWS managed policies. No wildcards on actions.
+- lambda.tf — claims processor Lambda with dead_letter_config pointing to SQS DLQ, DLQ processor Lambda triggered by SQS event source mapping with batch size 1, SQS Dead Letter Queue with 60 second visibility timeout and 14 day message retention, S3 invoke permission with depends_on Lambda function, SQS event source mapping
 - sns.tf — two topics with tags, two email subscriptions with placeholder endpoints
-- outputs.tf — s3 bucket name, dynamodb table name, lambda function name, both SNS ARNs, bedrock model ID
-- lambda.tf — claims processor Lambda, DLQ processor Lambda, SQS Dead Letter Queue with 60 second visibility timeout, S3 event source mapping, SQS event source mapping for DLQ processor
+- outputs.tf — s3 bucket name, dynamodb table name, lambda function name, both SNS ARNs, bedrock model ID, DLQ URL, DLQ processor function name
 
 **Lambda Function Requirements:**
-Produce a single lambda_function.py with these exact capabilities:
+
+Produce two separate Lambda functions:
+
+**1. lambda_function.py — Claims Pipeline Processor:**
 
 1. Dual PDF processing:
    - Download PDF from S3 into memory
@@ -79,7 +81,7 @@ Produce a single lambda_function.py with these exact capabilities:
    - human_review → SNS-Internal with priority-based subject line and structured email body
    - pending_documentation → SNS-Claimant with action required and 5 business day deadline
    - auto_process → DynamoDB write only, no SNS
-   - processing_error → both SNS-Internal and SNS-Claimant simultaneously
+   - processing_error → log error and raise exception only — do NOT fire SNS, DLQ processor handles all error notifications
 
 6. SLA deadline calculation:
    - human_review: 10 business days
@@ -95,12 +97,30 @@ Produce a single lambda_function.py with these exact capabilities:
 
 8. CloudWatch logging at every stage for observability
 
+9. Environment variables: DYNAMODB_TABLE, SNS_INTERNAL_ARN, SNS_CLAIMANT_ARN, BEDROCK_MODEL_ID, RISK_THRESHOLD
+
+**2. dlq_processor.py — Dead Letter Queue Processor:**
+
+1. Triggered by SQS event source mapping on the Dead Letter Queue
+2. Extract original S3 object key from failed event body
+3. Fire SNS-Internal alert with:
+   - Subject: [PIPELINE ERROR] Processing Failed — {object_key}
+   - S3 document location for manual retrieval
+   - Instructions for CloudWatch log investigation
+   - Escalation guidance
+4. Fire SNS-Claimant alert with:
+   - Professional resubmission request
+   - Accepted formats and file size limits
+   - Claims team contact details
+5. Exactly one notification per failed document — no duplicates
+6. Environment variables: SNS_INTERNAL_ARN, SNS_CLAIMANT_ARN, S3_BUCKET_NAME
+
 **Security Constraints:**
 - No hardcoded credentials anywhere
 - No hardcoded ARNs — all referenced via Terraform resource attributes
 - All sensitive values in variables.tf
 - .gitignore must cover .tfstate, .tfstate.backup, .terraform/, *.tfvars, crash.log
-- Lambda execution role must use custom least-privilege policy only
+- Both Lambda execution roles must use custom least-privilege policies only
 
 **Bedrock Prompt:**
 The system prompt passed to Bedrock must instruct the model to:
@@ -110,6 +130,7 @@ The system prompt passed to Bedrock must instruct the model to:
 - Return confidence: high/medium/low
 - Return priority: critical/high/medium/low
 - Return recommended_action: auto_process/human_review/pending_documentation/processing_error
+- pending_documentation takes priority over human_review when the only issue is missing documentation and no risk flag is triggered
 - Return audit_flag boolean
 - Return audit_note with plain English reasoning
 - Return ONLY valid JSON — no markdown, no preamble, no code fences
@@ -120,18 +141,23 @@ The system prompt passed to Bedrock must instruct the model to:
 - Fully handwritten documents not supported
 - Prior claims detection relies on document content only — no database lookup
 - SLA reminder notifications and auto-process audit reporting deferred to Phase 2
-- DLQ processor Lambda requires separate zip package — dlq_processor.zip built from src/dlq_processor.py
 
 ## How to Validate the Output
 As the architect reviewing the junior engineer's output, verify:
 1. Every Terraform file is separate — no combined main.tf
-2. IAM policy has exactly the permissions listed — no wildcards, no extras
-3. Lambda handler is named lambda_function.lambda_handler
-4. pypdf is imported from package/ subdirectory via sys.path insert
-5. Both SNS topics are referenced correctly in routing logic
-6. SLA deadlines are calculated dynamically not hardcoded
-7. All environment variables match what is defined in lambda.tf
-8. .gitignore is present in terraform/ folder
+2. Two separate IAM roles — one for claims processor, one for DLQ processor
+3. Claims processor IAM includes sqs:SendMessage for DLQ
+4. DLQ processor IAM includes sqs:ReceiveMessage, sqs:DeleteMessage, sqs:GetQueueAttributes
+5. Lambda handler is named lambda_function.lambda_handler
+6. DLQ processor handler is named dlq_processor.lambda_handler
+7. pypdf is imported from package/ subdirectory via sys.path insert
+8. Both SNS topics are referenced correctly in routing logic
+9. SLA deadlines are calculated dynamically not hardcoded
+10. All environment variables match what is defined in lambda.tf
+11. processing_error routing logs and raises only — no SNS in main Lambda
+12. DLQ processor fires exactly two SNS notifications — one internal, one claimant
+13. SQS visibility timeout is 60 seconds — matching Lambda timeout
+14. .gitignore is present in terraform/ folder
 
 ## Architect Review Findings (10 April 2026)
 
@@ -152,10 +178,12 @@ As the architect reviewing the junior engineer's output, verify:
   — corrected in prompt constraints above
 - depends_on references aws_iam_role_policy_attachment rather than
   aws_lambda_permission — valid alternative but differs from tested fix
+- DLQ and DLQ processor not included in original generation —
+  prompt updated to include full SQS architecture
 
 **Conclusion:**
 The one-shot prompt successfully reproduced the core infrastructure
-and Lambda function. Two discrepancies identified and corrected through
+and Lambda function. Three discrepancies identified and corrected through
 architect review — consistent with treating the AI as a junior engineer
 whose output requires validation. Full redeployment test planned as
 final validation step.
