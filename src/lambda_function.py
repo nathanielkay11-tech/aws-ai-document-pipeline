@@ -1,384 +1,424 @@
-# =============================================================
-# CHANGELOG
-# v1.7 - 11 April 2026
-# CHANGE: Removed SNS notification from main Lambda error handler
-# REASON: DLQ processor Lambda now handles all processing error
-# notifications after retry exhaustion. Main Lambda logs error
-# and raises exception only — no duplicate SNS notifications.
-# handle_processing_error function removed entirely.
-# =============================================================
+"""
+Insurance Claims Processor — Lambda Function
+=============================================
+Orchestrates the full claims triage pipeline:
+  S3 → pypdf/Textract → Bedrock → DynamoDB / SNS routing
+
+Known Limitations:
+  - Claimant authentication is out of scope; assumes a secure upload
+    mechanism exists upstream of the S3 trigger.
+  - Fully handwritten documents are not supported; Textract's FORMS/TABLES
+    features require at least partial printed or digital text.
+  - Prior claims detection relies solely on document content; no external
+    database lookup is performed.
+  - SLA reminder notifications and auto-process audit reporting are deferred
+    to Phase 2.
+"""
 
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'package'))
-
+import re
 import json
 import uuid
-import io
+import logging
 import boto3
-from decimal import Decimal
-from datetime import datetime, timezone, timedelta
-from pypdf import PdfReader
 
-# --- AWS Clients ---
-s3_client = boto3.client('s3')
-textract_client = boto3.client('textract')
-bedrock_client = boto3.client('bedrock-runtime')
-dynamodb = boto3.resource('dynamodb')
-sns_client = boto3.client('sns')
+from io import BytesIO
+from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
 
-# --- Environment Variables ---
-DYNAMODB_TABLE = os.environ['DYNAMODB_TABLE']
-SNS_INTERNAL_ARN = os.environ['SNS_INTERNAL_ARN']
-SNS_CLAIMANT_ARN = os.environ['SNS_CLAIMANT_ARN']
-BEDROCK_MODEL_ID = os.environ['BEDROCK_MODEL_ID']
-RISK_THRESHOLD = float(os.environ['RISK_THRESHOLD'])
+# pypdf is packaged into src/package/ and injected into the Lambda layer.
+# sys.path insert ensures the vendored library takes precedence over any
+# Lambda runtime version.
+sys.path.insert(0, "/var/task/package")
+import pypdf  # noqa: E402  (must follow sys.path insert)
 
-def lambda_handler(event, context):
-    """Main entry point for the claims processing pipeline."""
-    
-    try:
-        # --- STAGE 1: Read from S3 ---
-        bucket_name = event['Records'][0]['s3']['bucket']['name']
-        object_key = event['Records'][0]['s3']['object']['key']
-        
-        print(f"Processing file: {object_key} from bucket: {bucket_name}")
-        
-        s3_response = s3_client.get_object(Bucket=bucket_name, Key=object_key)
-        pdf_bytes = s3_response['Body'].read()
-        
-        # --- STAGE 2: Detect PDF type and extract text ---
-        raw_text = extract_text(pdf_bytes, bucket_name, object_key)
-        
-        print(f"Extracted {len(raw_text)} characters from document")
-        
-        # --- STAGE 3: AI Inference via Bedrock ---
-        claim_result = invoke_bedrock(raw_text)
-        
-        # --- STAGE 4: Validate JSON schema ---
-        validated_result = validate_schema(claim_result)
-        
-        # Add processing metadata
-        claim_id = str(uuid.uuid4())
-        processed_timestamp = datetime.now(timezone.utc)
-        validated_result['claim_id'] = claim_id
-        validated_result['source_document'] = object_key
-        validated_result['processed_timestamp'] = processed_timestamp.isoformat()
-        
-        # Calculate SLA deadline based on recommended action
-        sla_days = {
-            'human_review': 10,
-            'pending_documentation': 5,
-            'auto_process': 1,
-            'processing_error': 0
-        }
-        days = sla_days.get(validated_result.get('recommended_action'), 10)
-        sla_deadline = processed_timestamp + timedelta(days=days)
-        validated_result['sla_deadline'] = sla_deadline.strftime('%d %B %Y')
+# ─────────────────────────────────────────────
+# Logging
+# ─────────────────────────────────────────────
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
-        # Convert floats to Decimal for DynamoDB compatibility
-        validated_result = convert_floats_to_decimal(validated_result)
-        
-        # --- STAGE 5: Write to DynamoDB ---
-        table = dynamodb.Table(DYNAMODB_TABLE)
-        table.put_item(Item=validated_result)
-        
-        print(f"Claim {claim_id} written to DynamoDB")
-        
-        # --- STAGE 6: Route via SNS based on routing matrix ---
-        route_claim(validated_result)
-        
-        return {
-            'statusCode': 200,
-            'body': json.dumps({
-                'message': 'Claim processed successfully',
-                'claim_id': claim_id,
-                'recommended_action': validated_result.get('recommended_action')
-            })
-        }
-        
-    except Exception as e:
-        print(f"Pipeline error: {str(e)}")
-        raise
+# ─────────────────────────────────────────────
+# Environment variables
+# ─────────────────────────────────────────────
+DYNAMODB_TABLE   = os.environ["DYNAMODB_TABLE"]
+SNS_INTERNAL_ARN = os.environ["SNS_INTERNAL_ARN"]
+SNS_CLAIMANT_ARN = os.environ["SNS_CLAIMANT_ARN"]
+BEDROCK_MODEL_ID = os.environ["BEDROCK_MODEL_ID"]
+RISK_THRESHOLD   = float(os.environ.get("RISK_THRESHOLD", "50000"))
+
+# ─────────────────────────────────────────────
+# AWS clients
+# ─────────────────────────────────────────────
+s3       = boto3.client("s3")
+textract = boto3.client("textract")
+bedrock  = boto3.client("bedrock-runtime", region_name=os.environ.get("AWS_REGION_NAME", "us-east-1"))
+dynamodb = boto3.resource("dynamodb")
+sns      = boto3.client("sns")
+
+table = dynamodb.Table(DYNAMODB_TABLE)
+
+# ─────────────────────────────────────────────
+# Constants
+# ─────────────────────────────────────────────
+PYPDF_MIN_CHARS = 50  # Below this → treat as image-based PDF, route to Textract
+
+REQUIRED_FIELDS = [
+    "claimant_name", "policy_number", "incident_date", "claim_filed_date",
+    "claim_type", "incident_description", "total_amount_claimed",
+    "recommended_action", "confidence", "priority",
+    "audit_flag", "audit_note",
+]
+
+SLA_BUSINESS_DAYS = {
+    "human_review":          10,
+    "pending_documentation":  5,
+    "auto_process":           1,
+}
+
+SUBJECT_TEMPLATES = {
+    "critical": "[CRITICAL PRIORITY] Immediate Action Required - {claim_id}",
+    "high":     "[HIGH PRIORITY] Claim Review Required - {claim_id}",
+    "medium":   "[MEDIUM PRIORITY] Claim Review Required - {claim_id}",
+    "low":      "[LOW PRIORITY] Claim Review Required - {claim_id}",
+}
+
+BEDROCK_SYSTEM_PROMPT = """You are a senior insurance claims specialist with 20 years of experience
+in claims triage and fraud detection. Analyse the provided insurance claim document and extract
+structured information.
+
+Extract the following fields:
+- claimant_name
+- date_of_birth
+- policy_number
+- contact_details (object with phone, email, address sub-fields where present)
+- incident_date
+- claim_filed_date
+- claim_type
+- incident_description
+- total_amount_claimed (numeric value only, no currency symbol)
+- cost_breakdown (object or list of line items if present)
+- supporting_documentation_present (boolean)
+- prior_claims_detected (boolean, based on document content only — no external lookup)
+
+Apply risk flagging logic:
+- total_amount_claimed >= 50000
+- prior_claims_detected is true
+- filing delay > 90 days between incident_date and claim_filed_date
+- document inconsistencies detected
+- signs of alteration or tampering
+
+Return the following assessment fields:
+- confidence: "high" | "medium" | "low"
+- priority: "critical" | "high" | "medium" | "low"
+- recommended_action: "auto_process" | "human_review" | "pending_documentation" | "processing_error"
+  * pending_documentation takes priority over human_review when the ONLY issue is missing
+    documentation and NO risk flag has been triggered.
+- audit_flag: boolean
+- audit_note: plain English explanation of your reasoning, including any risk flags triggered
+
+Return ONLY valid JSON — no markdown, no preamble, no code fences.
+Use null for any fields not found in the document."""
 
 
-def convert_floats_to_decimal(obj):
+# ─────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────
+
+def add_business_days(start_date: datetime, days: int) -> datetime:
+    """Return a date that is `days` business days after start_date,
+    skipping Saturdays and Sundays."""
+    current = start_date
+    added = 0
+    while added < days:
+        current += timedelta(days=1)
+        if current.weekday() < 5:  # Monday–Friday
+            added += 1
+    return current
+
+
+def calculate_sla_deadline(action: str) -> str:
+    """Return a formatted SLA deadline string for the given action."""
+    business_days = SLA_BUSINESS_DAYS.get(action, 5)
+    deadline = add_business_days(datetime.utcnow(), business_days)
+    return deadline.strftime("%Y-%m-%d")
+
+
+def floats_to_decimals(obj):
     """Recursively convert float values to Decimal for DynamoDB compatibility."""
     if isinstance(obj, float):
-        return Decimal(str(obj))
-    elif isinstance(obj, dict):
-        return {k: convert_floats_to_decimal(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [convert_floats_to_decimal(i) for i in obj]
+        try:
+            return Decimal(str(obj))
+        except InvalidOperation:
+            return Decimal("0")
+    if isinstance(obj, dict):
+        return {k: floats_to_decimals(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [floats_to_decimals(i) for i in obj]
     return obj
 
 
-def extract_text(pdf_bytes, bucket_name, object_key):
-    """
-    Detect PDF type and extract text accordingly.
-    Text-based PDFs use pypdf directly.
-    Image-based PDFs use Textract OCR.
-    """
-    reader = PdfReader(io.BytesIO(pdf_bytes))
-    extracted_text = ''
-    
+def strip_markdown_fences(text: str) -> str:
+    """Remove markdown code fences (```json ... ``` or ``` ... ```) from a string."""
+    return re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.DOTALL)
+
+
+# ─────────────────────────────────────────────
+# PDF Extraction
+# ─────────────────────────────────────────────
+
+def extract_text_pypdf(pdf_bytes: bytes) -> str:
+    """Attempt direct text extraction from a PDF using pypdf."""
+    logger.info("Attempting pypdf text extraction")
+    reader = pypdf.PdfReader(BytesIO(pdf_bytes))
+    text_parts = []
     for page in reader.pages:
-        page_text = page.extract_text()
-        if page_text:
-            extracted_text += page_text + ' '
-    
-    extracted_text = extracted_text.strip()
-    
-    if extracted_text and len(extracted_text) > 50:
-        print(f"Text-based PDF detected - extracted via pypdf, bypassing Textract")
-        return extracted_text
-    else:
-        print(f"Image-based PDF detected - routing to Textract OCR")
-        return extract_text_via_textract(bucket_name, object_key)
+        text_parts.append(page.extract_text() or "")
+    return "\n".join(text_parts)
 
 
-def extract_text_via_textract(bucket_name, object_key):
-    """Extract text from image-based PDFs using Textract."""
-    textract_response = textract_client.analyze_document(
-        Document={
-            'S3Object': {
-                'Bucket': bucket_name,
-                'Name': object_key
+def extract_text_textract(pdf_bytes: bytes) -> str:
+    """Extract text from an image-based PDF using Amazon Textract."""
+    logger.info("Routing to Textract for image-based PDF")
+    response = textract.analyze_document(
+        Document={"Bytes": pdf_bytes},
+        FeatureTypes=["TABLES", "FORMS"],
+    )
+    blocks = response.get("Blocks", [])
+    lines = [b["Text"] for b in blocks if b["BlockType"] == "LINE" and "Text" in b]
+    return "\n".join(lines)
+
+
+def get_document_text(pdf_bytes: bytes) -> str:
+    """
+    Dual-path PDF text extraction:
+      1. Try pypdf — fast, free, no API call.
+      2. If extracted text is below PYPDF_MIN_CHARS, treat as image-based
+         and route to Textract.
+    """
+    text = extract_text_pypdf(pdf_bytes)
+    if len(text.strip()) >= PYPDF_MIN_CHARS:
+        logger.info("pypdf extraction successful (%d chars)", len(text))
+        return text
+
+    logger.info(
+        "pypdf yielded only %d chars — image-based PDF detected, routing to Textract",
+        len(text),
+    )
+    return extract_text_textract(pdf_bytes)
+
+
+# ─────────────────────────────────────────────
+# Bedrock Inference
+# ─────────────────────────────────────────────
+
+def invoke_bedrock(document_text: str) -> dict:
+    """
+    Send document text to Bedrock Claude for structured claim analysis.
+    Strips markdown fences and retries once on JSON parse failure.
+    Raises ValueError after 2 failed attempts.
+    """
+    payload = {
+        "anthropic_version": "bedrock-2023-05-31",
+        "max_tokens": 4096,
+        "system": BEDROCK_SYSTEM_PROMPT,
+        "messages": [
+            {
+                "role": "user",
+                "content": f"Analyse the following insurance claim document:\n\n{document_text}",
             }
-        },
-        FeatureTypes=['TABLES', 'FORMS']
-    )
-    
-    raw_text = ' '.join([
-        block['Text']
-        for block in textract_response['Blocks']
-        if block['BlockType'] == 'LINE' and 'Text' in block
-    ])
-    
-    print(f"Textract extracted {len(raw_text)} characters")
-    return raw_text
-
-
-def invoke_bedrock(raw_text, attempt=1):
-    """Call Bedrock with retry logic on JSON validation failure."""
-    
-    system_prompt = """Role: You are a senior insurance claims specialist with expertise in 
-    fraud detection, risk assessment, and claims compliance.
-    
-    Context: The following is raw text extracted via OCR from an insurance claims document.
-    
-    Task: Extract and analyze the claim data and return ONLY valid JSON matching this schema:
-    {
-        "claimant_name": "string",
-        "date_of_birth": "string", 
-        "policy_number": "string",
-        "contact_details": "string",
-        "incident_date": "string",
-        "claim_filed_date": "string",
-        "claim_type": "string",
-        "incident_description": "string",
-        "total_amount_claimed": number,
-        "cost_breakdown": ["string"],
-        "supporting_documentation_present": boolean,
-        "prior_claims_detected": boolean,
-        "risk_flag": boolean,
-        "confidence": "high | medium | low",
-        "priority": "critical | high | medium | low",
-        "recommended_action": "auto_process | human_review | pending_documentation | processing_error",
-        "audit_flag": boolean,
-        "audit_note": "string",
-        "sla_deadline": "string"
+        ],
     }
 
-    ROUTING RULES — follow these exactly:
-    - If total_amount_claimed >= 50000 OR prior_claims_detected is true: set recommended_action to human_review
-    - If supporting_documentation_present is false OR any required document is missing: set recommended_action to pending_documentation
-    - If confidence is high AND risk_flag is false AND supporting_documentation_present is true AND total_amount_claimed < 50000: set recommended_action to auto_process
-    - pending_documentation takes priority over human_review when the only issue is missing documentation and no risk flag is triggered
-    
-    Constraint: Return ONLY valid JSON. No explanation, no preamble, no markdown code fences. Use null for missing fields."""
-    
-    response = bedrock_client.invoke_model(
-        modelId=BEDROCK_MODEL_ID,
-        contentType='application/json',
-        accept='application/json',
-        body=json.dumps({
-            'anthropic_version': 'bedrock-2023-05-31',
-            'max_tokens': 2000,
-            'system': system_prompt,
-            'messages': [
-                {
-                    'role': 'user',
-                    'content': f"Process this insurance claim document:\n\n{raw_text}"
-                }
-            ]
-        })
+    for attempt in range(1, 3):
+        logger.info("Bedrock inference attempt %d", attempt)
+        response = bedrock.invoke_model(
+            modelId=BEDROCK_MODEL_ID,
+            contentType="application/json",
+            accept="application/json",
+            body=json.dumps(payload),
+        )
+        raw = json.loads(response["body"].read())
+        response_text = raw["content"][0]["text"]
+        logger.info("Bedrock raw response received (attempt %d)", attempt)
+
+        cleaned = strip_markdown_fences(response_text)
+        try:
+            result = json.loads(cleaned)
+            logger.info("Bedrock JSON parsed successfully on attempt %d", attempt)
+            return result
+        except json.JSONDecodeError as exc:
+            logger.warning("JSON parse failed on attempt %d: %s", attempt, exc)
+
+    raise ValueError("Bedrock returned invalid JSON after 2 attempts")
+
+
+# ─────────────────────────────────────────────
+# Schema Validation
+# ─────────────────────────────────────────────
+
+def validate_schema(claim_data: dict) -> dict:
+    """
+    Verify all required fields are present.
+    Overrides recommended_action to 'human_review' if any are missing,
+    so missing-field records are never silently auto-processed.
+    """
+    missing = [f for f in REQUIRED_FIELDS if f not in claim_data or claim_data[f] is None]
+    if missing:
+        logger.warning("Schema validation failed — missing fields: %s", missing)
+        claim_data["recommended_action"] = "human_review"
+        claim_data["audit_note"] = (
+            claim_data.get("audit_note", "")
+            + f" [Schema override: missing fields {missing}]"
+        )
+    return claim_data
+
+
+# ─────────────────────────────────────────────
+# SNS Routing
+# ─────────────────────────────────────────────
+
+def build_internal_subject(claim_id: str, priority: str) -> str:
+    template = SUBJECT_TEMPLATES.get(priority.lower(), SUBJECT_TEMPLATES["medium"])
+    return template.format(claim_id=claim_id)
+
+
+def publish_internal_notification(claim_id: str, claim_data: dict, sla_deadline: str):
+    priority = claim_data.get("priority", "medium").lower()
+    subject = build_internal_subject(claim_id, priority)
+    message = (
+        f"INSURANCE CLAIM — HUMAN REVIEW REQUIRED\n"
+        f"{'=' * 50}\n\n"
+        f"Claim ID:          {claim_id}\n"
+        f"Claimant Name:     {claim_data.get('claimant_name', 'N/A')}\n"
+        f"Policy Number:     {claim_data.get('policy_number', 'N/A')}\n"
+        f"Claim Type:        {claim_data.get('claim_type', 'N/A')}\n"
+        f"Amount Claimed:    ${claim_data.get('total_amount_claimed', 'N/A')}\n"
+        f"Priority:          {priority.upper()}\n"
+        f"Confidence:        {claim_data.get('confidence', 'N/A')}\n"
+        f"Audit Flag:        {claim_data.get('audit_flag', False)}\n"
+        f"SLA Deadline:      {sla_deadline}\n\n"
+        f"Audit Note:\n{claim_data.get('audit_note', 'None')}\n\n"
+        f"Please log in to the claims portal to review this submission."
     )
-    
-    response_body = json.loads(response['body'].read())
-    result_text = response_body['content'][0]['text']
-    
-    # Strip markdown code fences if present
-    clean_text = result_text.strip()
-    if clean_text.startswith('```'):
-        clean_text = clean_text.split('```')[1]
-        if clean_text.startswith('json'):
-            clean_text = clean_text[4:]
-    clean_text = clean_text.strip()
-    
-    try:
-        return json.loads(clean_text)
-    except json.JSONDecodeError:
-        if attempt < 2:
-            print(f"JSON parse failed on attempt {attempt}, retrying...")
-            return invoke_bedrock(raw_text, attempt=2)
-        else:
-            print(f"JSON parse failed after 2 attempts")
-            print(f"Raw response: {result_text[:500]}")
-            raise ValueError("Bedrock returned invalid JSON after 2 attempts")
+    logger.info("Publishing SNS-Internal notification for claim %s", claim_id)
+    sns.publish(TopicArn=SNS_INTERNAL_ARN, Subject=subject, Message=message)
 
 
-def validate_schema(result):
-    """Validate that required fields are present in Bedrock response."""
-    
-    required_fields = [
-        'claimant_name', 'policy_number', 'incident_date',
-        'total_amount_claimed', 'risk_flag', 'confidence',
-        'priority', 'recommended_action', 'audit_note'
-    ]
-    
-    missing_fields = [f for f in required_fields if f not in result]
-    
-    if missing_fields:
-        print(f"Missing required fields: {missing_fields}")
-        result['recommended_action'] = 'human_review'
-        result['audit_note'] = f"Schema validation failed - missing fields: {missing_fields}"
-        result['confidence'] = 'low'
-        result['priority'] = 'high'
-    
-    return result
+def publish_claimant_notification(claim_id: str, claim_data: dict, sla_deadline: str):
+    subject = f"Action Required: Additional Documentation Needed — Claim {claim_id}"
+    message = (
+        f"Dear {claim_data.get('claimant_name', 'Claimant')},\n\n"
+        f"Thank you for submitting your insurance claim (Reference: {claim_id}).\n\n"
+        f"After reviewing your submission, our claims team has determined that "
+        f"additional documentation is required to process your claim.\n\n"
+        f"ACTION REQUIRED\n"
+        f"{'─' * 30}\n"
+        f"Please provide the outstanding documentation within 5 business days "
+        f"(by {sla_deadline}) to avoid delays in processing your claim.\n\n"
+        f"If you have any questions, please contact our claims team who will be "
+        f"happy to assist you.\n\n"
+        f"Kind regards,\nInsurance Claims Team"
+    )
+    logger.info("Publishing SNS-Claimant notification for claim %s", claim_id)
+    sns.publish(TopicArn=SNS_CLAIMANT_ARN, Subject=subject, Message=message)
 
 
-def format_amount(amount):
-    """Format amount as currency string."""
-    try:
-        return f"${float(amount):,.2f}"
-    except:
-        return str(amount)
+# ─────────────────────────────────────────────
+# DynamoDB Write
+# ─────────────────────────────────────────────
+
+def write_to_dynamodb(claim_id: str, claim_data: dict, sla_deadline: str, object_key: str):
+    item = floats_to_decimals({
+        "claim_id":       claim_id,
+        "s3_object_key":  object_key,
+        "processed_at":   datetime.utcnow().isoformat(),
+        "sla_deadline":   sla_deadline,
+        **claim_data,
+    })
+    logger.info("Writing claim %s to DynamoDB table %s", claim_id, DYNAMODB_TABLE)
+    table.put_item(Item=item)
+    logger.info("DynamoDB write successful for claim %s", claim_id)
 
 
-def get_subject_line(priority, claim_id):
-    """Generate priority-based subject line."""
-    prefix = {
-        'critical': '[CRITICAL PRIORITY] Immediate Action Required',
-        'high':     '[HIGH PRIORITY] Claim Review Required',
-        'medium':   '[MEDIUM PRIORITY] Claim Review Required',
-        'low':      '[LOW PRIORITY] Claim Review Required'
-    }
-    label = prefix.get(priority.lower(), '[REVIEW REQUIRED] Claim Alert')
-    return f"{label} - {claim_id}"
+# ─────────────────────────────────────────────
+# Lambda Handler
+# ─────────────────────────────────────────────
 
+def lambda_handler(event, context):
+    """
+    Entry point triggered by S3 ObjectCreated event on .pdf suffix.
+    Pipeline stages:
+      1. Download PDF from S3
+      2. Extract text (pypdf → Textract fallback)
+      3. Invoke Bedrock for structured analysis
+      4. Validate schema
+      5. Route: human_review → SNS-Internal
+                pending_documentation → SNS-Claimant
+                auto_process → DynamoDB only
+                processing_error → log + raise (DLQ handles notifications)
+    """
+    logger.info("Lambda invoked — event: %s", json.dumps(event))
 
-def route_claim(result):
-    """Route claim to appropriate SNS topic based on routing matrix."""
-    
-    recommended_action = result.get('recommended_action')
-    priority = result.get('priority', 'high')
-    confidence = result.get('confidence', 'medium')
-    claim_id = result.get('claim_id')
-    sla_deadline = result.get('sla_deadline', 'N/A')
-    amount = format_amount(result.get('total_amount_claimed'))
+    record = event["Records"][0]
+    bucket = record["s3"]["bucket"]["name"]
+    key    = record["s3"]["object"]["key"]
 
-    if recommended_action == 'human_review':
-        subject = get_subject_line(priority, claim_id)
-        message = f"""
-CLAIMS REVIEW REQUIRED
-{'=' * 60}
+    logger.info("Processing document: s3://%s/%s", bucket, key)
 
-CLAIM DETAILS
-Claim Reference:  {claim_id}
-Claimant:         {result.get('claimant_name', 'N/A')}
-Policy Number:    {result.get('policy_number', 'N/A')}
-Claim Type:       {result.get('claim_type', 'N/A')}
-Date of Incident: {result.get('incident_date', 'N/A')}
-Date Filed:       {result.get('claim_filed_date', 'N/A')}
-Amount Claimed:   {amount}
+    # 1. Download PDF
+    logger.info("Downloading PDF from S3")
+    s3_response = s3.get_object(Bucket=bucket, Key=key)
+    pdf_bytes = s3_response["Body"].read()
+    logger.info("PDF downloaded — %d bytes", len(pdf_bytes))
 
-{'=' * 60}
-ASSESSMENT
-Confidence:       {confidence.upper()}
-Priority:         {priority.upper()}
-Recommendation:   Human Review Required
+    # 2. Extract text
+    document_text = get_document_text(pdf_bytes)
+    logger.info("Text extraction complete — %d characters", len(document_text))
 
-{'=' * 60}
-REASON FOR REVIEW
-{result.get('audit_note', 'N/A')}
+    # 3. Bedrock inference
+    logger.info("Invoking Bedrock model: %s", BEDROCK_MODEL_ID)
+    claim_data = invoke_bedrock(document_text)
 
-{'=' * 60}
-SLA INFORMATION
-Review Deadline:  {sla_deadline}
-Time Allowed:     10 business days from receipt
+    # 4. Schema validation
+    claim_data = validate_schema(claim_data)
 
-Note: An automated reminder will be sent 5 business days
-before the SLA deadline if this claim remains unresolved.
-(Phase 2 — EventBridge Scheduler)
+    # 5. Routing
+    claim_id         = str(uuid.uuid4())
+    action           = claim_data.get("recommended_action", "processing_error")
+    sla_deadline     = calculate_sla_deadline(action)
 
-{'=' * 60}
-This is an automated notification from the Northgate
-Insurance AI Claims Processing Pipeline.
-Do not reply to this email.
-        """
-        sns_client.publish(
-            TopicArn=SNS_INTERNAL_ARN,
-            Subject=subject,
-            Message=message
+    logger.info("Claim %s — action=%s, priority=%s, sla=%s",
+                claim_id, action, claim_data.get("priority"), sla_deadline)
+
+    if action == "human_review":
+        write_to_dynamodb(claim_id, claim_data, sla_deadline, key)
+        publish_internal_notification(claim_id, claim_data, sla_deadline)
+
+    elif action == "pending_documentation":
+        write_to_dynamodb(claim_id, claim_data, sla_deadline, key)
+        publish_claimant_notification(claim_id, claim_data, sla_deadline)
+
+    elif action == "auto_process":
+        write_to_dynamodb(claim_id, claim_data, sla_deadline, key)
+        logger.info("Claim %s auto-processed — no SNS notification required", claim_id)
+
+    elif action == "processing_error":
+        # Do NOT publish SNS here — the DLQ processor handles all error
+        # notifications after all Lambda retry attempts are exhausted.
+        logger.error(
+            "processing_error returned by Bedrock for claim %s — "
+            "audit_note: %s",
+            claim_id, claim_data.get("audit_note"),
         )
-        print(f"Internal SNS alert sent for claim {claim_id}")
-
-    elif recommended_action == 'pending_documentation':
-        message = f"""
-ADDITIONAL DOCUMENTATION REQUIRED
-{'=' * 60}
-
-Dear {result.get('claimant_name', 'Claimant')},
-
-Your insurance claim submission has been received and reviewed.
-Additional documentation is required before your claim can
-be processed.
-
-CLAIM DETAILS
-Claim Reference:  {claim_id}
-Amount Claimed:   {amount}
-Date Filed:       {result.get('claim_filed_date', 'N/A')}
-
-{'=' * 60}
-ACTION REQUIRED
-{result.get('audit_note', 'N/A')}
-
-{'=' * 60}
-IMPORTANT — RESPONSE DEADLINE
-Please resubmit your claim with the required documentation
-within 5 business days of this notification.
-
-Response Deadline: {sla_deadline}
-
-Failure to respond by this date may result in your claim
-being suspended pending further review.
-
-{'=' * 60}
-This is an automated notification from the Northgate
-Insurance Claims Processing System.
-For assistance please contact claims@northgateinsurance.com
-        """
-        sns_client.publish(
-            TopicArn=SNS_CLAIMANT_ARN,
-            Subject=f"Action Required — Claim {claim_id}",
-            Message=message
+        raise RuntimeError(
+            f"Bedrock flagged processing_error for document s3://{bucket}/{key}"
         )
-        print(f"Claimant SNS notification sent for claim {claim_id}")
 
-    elif recommended_action == 'auto_process':
-        print(f"Claim {claim_id} auto-processed — no SNS required")
+    else:
+        logger.error("Unexpected action '%s' for claim %s", action, claim_id)
+        raise ValueError(f"Unknown recommended_action: {action}")
 
-    elif recommended_action == 'processing_error':
-        print(f"Claim {claim_id} marked as processing_error — DLQ processor will handle notification")
+    logger.info("Pipeline complete for claim %s", claim_id)
+    return {"statusCode": 200, "claim_id": claim_id, "action": action}
