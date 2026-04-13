@@ -44,11 +44,11 @@ The pipeline must use the following AWS services in sequence:
 **Terraform Structure:**
 Produce separate files for each resource — do not combine into a single main.tf:
 - main.tf — AWS provider and Terraform version configuration only
-- variables.tf — all configurable values including region, model ID, bucket name, table name, SNS topic names, risk threshold, environment tag, Lambda function names, timeout and memory
+- variables.tf — all configurable values including region, model ID, bucket name, table name, SNS topic names, risk threshold, environment tag, Lambda function name, Lambda timeout defaulting to 300 seconds, Lambda memory defaulting to 512 MB, DLQ processor function name, DLQ processor timeout defaulting to 30 seconds, DLQ processor memory defaulting to 128 MB
 - s3.tf — private bucket, public access block, AES256 encryption, PDF event notification trigger
 - dynamodb.tf — on-demand billing, claim_id as String partition key, server-side encryption
 - iam.tf — two separate IAM roles and least-privilege policies: (1) claims processor Lambda role with s3:GetObject, textract:DetectDocumentText, textract:AnalyzeDocument, bedrock:InvokeModel for both foundation-model and inference-profile ARNs, dynamodb:PutItem, sns:Publish for both SNS topic ARNs, sqs:SendMessage for DLQ ARN, logs permissions. (2) DLQ processor Lambda role with sns:Publish for both SNS topic ARNs, sqs:ReceiveMessage, sqs:DeleteMessage, sqs:GetQueueAttributes for DLQ ARN, logs permissions. No AWS managed policies. No wildcards on actions.
-- lambda.tf — claims processor Lambda with dead_letter_config pointing to SQS DLQ, DLQ processor Lambda triggered by SQS event source mapping with batch size 1, SQS Dead Letter Queue with 60 second visibility timeout and 14 day message retention, S3 invoke permission with depends_on Lambda function, SQS event source mapping
+- lambda.tf — claims processor Lambda with filename referencing `${path.module}/../src/lambda_function.zip`, DLQ processor Lambda with filename referencing `${path.module}/../src/dlq_processor.zip`, dead_letter_config pointing to SQS DLQ, DLQ processor Lambda triggered by SQS event source mapping with batch size 1, SQS Dead Letter Queue with 60 second visibility timeout and 14 day message retention, S3 invoke permission with depends_on Lambda function, SQS event source mapping
 - sns.tf — two topics with tags, two email subscriptions with placeholder endpoints
 - outputs.tf — s3 bucket name, dynamodb table name, lambda function name, both SNS ARNs, bedrock model ID, DLQ URL, DLQ processor function name
 
