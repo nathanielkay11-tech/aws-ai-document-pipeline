@@ -44,6 +44,71 @@ validation check.
 
 ---
 
+## 💡 Why This Architecture — Design Decisions & Cost Analysis
+
+### Architecture Alternatives Considered
+
+Three approaches were evaluated before settling on the current design:
+
+**Option 1: Always-on EC2 + RDS (Rejected)**
+The traditional approach — a dedicated server running 24/7 to process incoming claims. Reliable and familiar, but fundamentally mismatched to this use case. Insurance claims arrive in bursts, not at a steady stream. An always-on server sits idle for the majority of its runtime, accumulating cost regardless of whether a single document is being processed. Maintenance overhead, patching and capacity planning add further operational cost that has no business justification here.
+
+**Option 2: Containerised Pipeline on ECS/Fargate (Rejected)**
+A more modern approach — containerised logic running on Fargate. Better than EC2 for variable workloads, but still carries a minimum billing floor and added complexity around container management, image versioning and task definitions. For a document triage pipeline with no real-time latency requirement, this overhead is unnecessary.
+
+**Option 3: Fully Serverless Event-Driven Pipeline — Current Architecture ✅**
+Lambda, DynamoDB, SNS and SQS are all pay-per-use with zero idle cost. The pipeline only runs when a document is uploaded. Bedrock as a managed service removes all AI infrastructure overhead — no GPU provisioning, no model training, no MLOps. Textract handles OCR natively without custom computer vision code. The entire stack scales automatically from 1 to 500,000 claims without a single configuration change.
+
+---
+
+### 📊 Projected Cost by Use Case Tier
+
+#### Volume Definitions
+
+| Tier | Monthly Claims | Daily Average | Profile |
+|---|---|---|---|
+| 🟢 **Small Insurer** | 1,000–5,000 | 33–167/day | Regional insurer, single product line, low automation maturity |
+| 🟡 **Mid-Size Insurer** | 10,000–50,000 | 333–1,667/day | Multi-line insurer, active digital transformation programme |
+| 🔴 **Large Enterprise** | 100,000–500,000 | 3,333–16,667/day | National insurer or multi-brand group, high-volume automated triage |
+
+---
+
+#### Monthly Cost Estimates
+
+All figures based on current AWS us-east-1 pricing (April 2026). Assumes average claim document of 2 pages, ~2,000 input tokens and ~500 output tokens per Bedrock invocation, and 60% of claims requiring Textract (image-based PDFs).
+
+| Service | Small (5,000/mo) | Mid (50,000/mo) | Large (500,000/mo) |
+|---|---|---|---|
+| Amazon Bedrock (Claude Sonnet 4.5) | ~$80 | ~$800 | ~$8,000 |
+| Amazon Textract (60% image-based) | ~$45 | ~$450 | ~$4,500 |
+| AWS Lambda | ~$1 | ~$5 | ~$50 |
+| Amazon DynamoDB | ~$1 | ~$5 | ~$25 |
+| Amazon SNS + SQS | <$1 | ~$2 | ~$10 |
+| Amazon S3 | <$1 | ~$2 | ~$15 |
+| CloudWatch Logs | ~$1 | ~$5 | ~$40 |
+| **Total Monthly** | **~$130** | **~$1,270** | **~$12,640** |
+| **Cost per claim** | **~$0.026** | **~$0.025** | **~$0.025** |
+
+> ⚠️ These are indicative estimates. Bedrock token usage will vary based on document length and complexity. Always validate with the [AWS Pricing Calculator](https://calculator.aws/pricing/2/home) for production budgeting.
+
+**The key insight:** Bedrock accounts for approximately 60% of total pipeline cost and Textract for a further 35%. The remaining infrastructure — Lambda, DynamoDB, SNS, S3 — costs almost nothing. This is the correct trade-off: the value-generating steps dominate the bill, not the plumbing.
+
+---
+
+#### Cost vs. Manual Processing Benchmark
+
+To contextualise these numbers — a human claims processor typically handles 15–25 documents per hour at a fully-loaded cost of $35–50/hour. At 20 documents/hour and $40/hour fully-loaded:
+
+| Volume | Manual Processing Cost | Pipeline Cost | Saving |
+|---|---|---|---|
+| 5,000 claims/month | ~$10,000 | ~$130 | **98.7%** |
+| 50,000 claims/month | ~$100,000 | ~$1,270 | **98.7%** |
+| 500,000 claims/month | ~$1,000,000 | ~$12,640 | **98.7%** |
+
+The pipeline doesn't replace human judgement — high-risk claims still route to a human reviewer. It eliminates the manual triage layer entirely, freeing claims staff to focus on complex cases that genuinely require human expertise.
+
+---
+
 ## 🏗️ Architecture Overview
 
 ```mermaid
